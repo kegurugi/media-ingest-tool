@@ -1,0 +1,14 @@
+import pytest
+
+from media_ingest.cli import main
+
+
+def test_no_command_prints_help(capsys):
+    assert main([]) == 2
+    assert "ingest" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("argv", [["ingest"], ["verify", "X"], ["report", "10122026"], ["log", "export"]])
+def test_commands_are_stubbed(argv, capsys):
+    assert main(argv) == 2
+    assert "not implemented yet" in capsys.readouterr().err
