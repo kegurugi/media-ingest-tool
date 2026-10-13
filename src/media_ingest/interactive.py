@@ -528,6 +528,54 @@ def run_verify(args, p: Prompter) -> int:
     return EXIT_PASS
 
 
+def _card_targets(args, p: Prompter):
+    """(folder, drive, card) for card folders given, or every current card on --drive [--date]."""
+    if args.drive and args.folders:
+        raise IngestError("Give card folders or --drive, not both")
+    if args.date and not args.drive:
+        raise IngestError("--date needs --drive")
+    if not args.drive and not args.folders:
+        raise IngestError("Give one or more card folders, or --drive (optionally with --date)")
+    targets = []
+    if args.drive:
+        drive = resolve_destination(args.drive)
+        if not drive.is_dir():
+            raise IngestError(f"{drive} not found. Is the drive mounted?")
+        shoot_date = parse_shoot_date(args.date) if args.date else None
+        listed = spotcheck.cards_on_drive(drive, shoot_date)
+        if not listed:
+            raise IngestError(f"No cards logged on {drive}" + (f" for {shoot_date:%m/%d/%Y}" if shoot_date else ""))
+        targets = [(drive / rel, drive, CardName.parse(name)) for name, rel in listed]
+    else:
+        for folder in args.folders:
+            drive, card, _ = spotcheck.locate_card(Path(folder))
+            targets.append((Path(folder).expanduser(), drive, card))
+    return targets
+
+
+def run_mhl(args, p: Prompter) -> int:
+    """`mit mhl`: write ASC MHL manifests for verified cards that don't have one yet."""
+    targets = _card_targets(args, p)
+    written = problems = 0
+    for i, (folder, drive, card) in enumerate(targets, 1):
+        progress = _ProgressPrinter(p.err)
+        try:
+            r = spotcheck.write_missing_mhl(folder, drive, card, rehash=args.verify, progress=progress)
+        except IngestError as e:
+            r = spotcheck.MhlResult(card=str(card), folder=folder, problem=str(e))
+        progress.finish()
+        if r.written:
+            written += 1
+            p.say(f"  [{i}/{len(targets)}] WROTE    {r.card}  {r.written.parent.name}/{r.written.name}")
+        elif r.skipped:
+            p.say(f"  [{i}/{len(targets)}] skipped  {r.card}  ({r.skipped})")
+        else:
+            problems += 1
+            p.say(f"  [{i}/{len(targets)}] NOT WRITTEN  {r.card}: {r.problem}")
+    p.say(f"{written} manifest(s) written" + (f", {problems} card(s) need attention" if problems else "") + ".")
+    return EXIT_FAIL if problems else EXIT_PASS
+
+
 def _choose_operator(p: Prompter, operators: List[str], given: Optional[str]) -> str:
     """Operator from the config list, by name or number. Only one listed: chosen automatically."""
     def match(text: str) -> Optional[str]:

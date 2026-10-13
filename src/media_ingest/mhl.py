@@ -113,15 +113,19 @@ def _local_iso(ts: float, micro: bool = False) -> str:
 
 
 def write_mhl(card_dir: Path, card: str, files: Dict[str, str], dirs: Iterable[str],
-              operator: str = "", now: Optional[datetime] = None) -> Path:
-    """Write the first ASC MHL generation for a verified card folder. Returns the .mhl path."""
+              operator: str = "", now: Optional[datetime] = None, hash_date: Optional[datetime] = None) -> Path:
+    """Write the first ASC MHL generation for a verified card folder. Returns the .mhl path.
+
+    hash_date is when the hashes were made and verified (default: now); `mit mhl`
+    passes the original offload's time when writing a manifest for an older card.
+    """
     card_dir = Path(card_dir)
     now = (now or datetime.now()).astimezone()
     patterns = ignore_patterns(card)
     files = {p: h for p, h in files.items() if not _ignored(p, patterns)}
     dirs = [d for d in dirs if not _ignored(d, patterns)]
     tree = directory_hashes(files, dirs)
-    stamp = now.isoformat(timespec="microseconds")
+    stamp = (hash_date.astimezone() if hash_date else now).isoformat(timespec="microseconds")
 
     ET.register_namespace("", NS)
     root = ET.Element(f"{{{NS}}}hashlist", {"version": "2.0"})

@@ -144,3 +144,74 @@ def test_copy_all_clutter_is_not_listed(sample_card, drives):
     text = r.mhl_paths[0].read_text()
     assert ".DS_Store</path>" not in text and "._C0001.MP4" not in text
     assert text.count("<hash>") == 5
+
+
+# --- `mit mhl`: manifests for cards offloaded before manifests existed ---------------
+
+from media_ingest.cli import main
+
+
+@pytest.fixture
+def old_cards(card_dirs, tmp_path):
+    """Cards as if offloaded before manifests existed: move the manifests out of the way."""
+    for i, d in enumerate(card_dirs):
+        (d / "ascmhl").rename(tmp_path / f"old_mhl_{i}")
+    return card_dirs
+
+
+def test_mit_mhl_writes_a_manifest_from_the_log(old_cards, drives, capsys):
+    assert main(["mhl", str(old_cards[0])]) == 0
+    assert "WROTE    ABC261012A01" in capsys.readouterr().out
+    (mhl,) = (old_cards[0] / "ascmhl").glob("0001_*.mhl")
+    text = mhl.read_text()
+    record = read_card_record(drives[0] / "_REPORTS/10122026/ABC261012A01_card.json")
+    assert record["offload_finished"][:16] in text  # hashes dated when they were verified
+    assert '<author role="DIT">Dwayne Fowler</author>' in text and text.count("<hash>") == 5
+    assert not (old_cards[1] / "ascmhl").exists()  # only the folder asked for
+
+
+@needs_ascmhl
+def test_mit_mhl_manifest_verifies_with_the_reference_tool(old_cards, tmp_path):
+    assert main(["mhl", "--drive", str(old_cards[1].parents[2])]) == 0
+    copy = tmp_path / "copy" / old_cards[1].name
+    shutil.copytree(old_cards[1], copy, copy_function=shutil.copy2)
+    r = ascmhl("create", copy, "-h", "xxh64")
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_mit_mhl_skips_cards_that_already_have_one(card_dirs, capsys):
+    before = sorted((card_dirs[0] / "ascmhl").iterdir())
+    assert main(["mhl", str(card_dirs[0])]) == 0
+    assert "skipped  ABC261012A01  (already has an ASC MHL manifest)" in capsys.readouterr().out
+    assert sorted((card_dirs[0] / "ascmhl").iterdir()) == before
+
+
+def test_mit_mhl_refuses_a_changed_card(old_cards, capsys):
+    with open(old_cards[0] / CLIP1, "r+b") as f:
+        f.truncate(100)
+    assert main(["mhl", str(old_cards[0])]) == 1
+    assert f"{CLIP1} is missing or a different size" in capsys.readouterr().out
+    assert not (old_cards[0] / "ascmhl").exists()
+
+
+def test_mit_mhl_verify_option_rehashes_first(old_cards, capsys):
+    data = bytearray((old_cards[0] / CLIP1).read_bytes())
+    data[10] ^= 1  # same size, different content: only a re-hash notices
+    (old_cards[0] / CLIP1).write_bytes(bytes(data))
+    assert main(["mhl", str(old_cards[0])]) == 0  # quick mode trusts the logged hashes
+    (old_cards[0] / "ascmhl").rename(old_cards[0].parent / "again")
+    assert main(["mhl", "--verify", str(old_cards[0])]) == 1
+    out = capsys.readouterr().out
+    assert "re-verification FAILED" in out and f"MISMATCH {CLIP1}" in out
+    assert not (old_cards[0] / "ascmhl").exists()
+
+
+def test_mit_mhl_refuses_failed_cards(sample_card, drives, monkeypatch, capsys):
+    real = offload_mod.copy_card
+    monkeypatch.setattr(offload_mod, "copy_card",
+                        lambda l, d, **kw: (real(l, d, **kw), (d[1] / CLIP1).write_bytes(b"x"))[0])
+    r = offload(sample_card, drives)
+    from media_ingest.incomplete import MARKER_NAME
+    (r.card_dirs[0] / MARKER_NAME).unlink()  # even without the marker, the log says FAIL
+    assert main(["mhl", str(r.card_dirs[0])]) == 1
+    assert "its offload was FAIL" in capsys.readouterr().out

@@ -150,7 +150,9 @@ def _header_fields(record: Dict[str, Any], volumes: List[str]) -> str:
 def _mhl_text(record: Dict[str, Any]) -> str:
     paths = [d.get("ascmhl") for d in record.get("destinations", []) if d.get("ascmhl")]
     if not paths:
-        return "not written" if "destinations" in record and record.get("result") == "PASS" else ""
+        # Only records made since manifests existed have the "ascmhl" key at all.
+        has_key = any("ascmhl" in d for d in record.get("destinations", []))
+        return "not written" if has_key and record.get("result") == "PASS" else ""
     return f"{paths[0]} (in the card folder on {len(paths)} drive{'s' if len(paths) != 1 else ''})"
 
 

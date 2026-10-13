@@ -272,6 +272,18 @@ tool can check a card independently:
 ascmhl create /Volumes/DRV01B/10122026/VIDEO/ABC261012A01 -h xxh64
 ```
 
+For cards offloaded before manifests existed:
+
+```bash
+.venv/bin/mit mhl --drive DRV01A
+```
+
+writes a manifest into every verified card folder that doesn't have one, using
+the hashes in the log (each file must still be present at its logged size).
+Add `--verify` to re-hash each card first. Cards that already have a manifest,
+failed cards and cards still being copied are left alone. It also takes card
+folders or `--date`, like `mit verify`.
+
 (`ascmhl create` on a folder that already has a history re-hashes everything
 against it and fails on any mismatch; it adds a second manifest recording the
 check.) The tests use the reference tool (`pip install ascmhl`, installed with

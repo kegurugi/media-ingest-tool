@@ -45,6 +45,8 @@ class Expected:
     offload_uid: str = ""
     card_path: str = ""  # relative to the drive, from the log/record
     offload_result: str = ""
+    operator: str = ""
+    offload_finished: str = ""
     notes: List[str] = field(default_factory=list)
 
 
@@ -162,7 +164,8 @@ def load_expected(drive: Path, card: CardName) -> Expected:
     return Expected(
         card=card, files=_record_files(record), dirs=list(record.get("dirs", [])), source=SOURCE_RECORD,
         offload_uid=record.get("offload_id", ""), card_path=dest.get("card_path", ""),
-        offload_result=record.get("result", ""),
+        offload_result=record.get("result", ""), operator=record.get("operator", ""),
+        offload_finished=record.get("offload_finished", ""),
         notes=["The master log has no entry for this card (or is missing or damaged); "
                "hashes came from the card record."],
     )
@@ -181,7 +184,8 @@ def _expected_from_log(drive: Path, card: CardName) -> Optional[Expected]:
         files = [ExpectedFile(r["path"], r["size"], r["xxh64"] or "")
                  for r in conn.execute("SELECT path, size, xxh64 FROM files WHERE offload_id = ? ORDER BY path", (row["id"],))]
     return Expected(card=card, files=files, dirs=None, source=SOURCE_LOG, offload_uid=row["offload_uid"],
-                    card_path=row["card_path"] or "", offload_result=row["result"])
+                    card_path=row["card_path"] or "", offload_result=row["result"],
+                    operator=row["operator"] or "", offload_finished=row["offload_finished"] or "")
 
 
 def _read_record(drive: Path, card: CardName) -> Optional[Dict[str, Any]]:
@@ -271,3 +275,68 @@ def record_results(drive: Path, checks: List[CardCheck], when: Optional[datetime
         "failures": len(c.failures) + len(c.missing_dirs) + len(c.problems),
         "source": c.source, "details": c.details(), "tool_version": __version__,
     } for c in checks])
+
+
+# --- `mit mhl`: manifests for cards offloaded before they were written ------------
+
+@dataclass
+class MhlResult:
+    card: str
+    folder: Path
+    written: Optional[Path] = None
+    skipped: str = ""  # why nothing was written (fine)
+    problem: str = ""  # why nothing was written (needs attention)
+
+
+def write_missing_mhl(folder: Path, drive: Optional[Path] = None, card: Optional[CardName] = None,
+                      rehash: bool = False, progress=None) -> MhlResult:
+    """Write an ASC MHL manifest for a verified card folder that doesn't have one.
+
+    The hashes come from the log (as `mit verify` uses them). Before writing, every
+    file must be present at the logged size; with rehash=True the card is fully
+    re-verified first.
+    """
+    from .mhl import MHL_DIRNAME, write_mhl
+    folder = Path(folder)
+    if drive is None or card is None:
+        drive, card, _ = locate_card(folder)
+    result = MhlResult(card=str(card), folder=folder)
+    if (folder / MHL_DIRNAME).exists():
+        result.skipped = "already has an ASC MHL manifest"
+        return result
+    if not folder.is_dir():
+        result.problem = MISSING_FOLDER
+        return result
+    marker = read_marker(folder)
+    if marker is not None and marker.status == COPYING:
+        result.problem = "the card is still being offloaded, or that offload was interrupted"
+        return result
+    expected = load_expected(drive, card)
+    if expected.offload_result != "PASS":
+        result.problem = f"its offload was {expected.offload_result or 'not verified'}; recopy the card first"
+        return result
+    if any(not e.xxh64 for e in expected.files):
+        result.problem = "some files have no recorded hash"
+        return result
+    if rehash:
+        check = check_card(folder, drive, card, progress=progress)
+        if not check.passed:
+            result.problem = "re-verification FAILED: " + check.details()
+            return result
+    else:
+        for e in expected.files:
+            path = folder / e.rel_path
+            if not path.is_file() or path.stat().st_size != e.size:
+                result.problem = f"{e.rel_path} is missing or a different size; run `mit verify` on this card"
+                return result
+    hash_date = None
+    if expected.offload_finished:
+        try:
+            hash_date = datetime.fromisoformat(expected.offload_finished)
+        except ValueError:
+            pass
+    dirs = expected.dirs if expected.dirs is not None else sorted(
+        {str(PurePosixPath(e.rel_path).parent) for e in expected.files} - {"."})
+    result.written = write_mhl(folder, str(card), {e.rel_path: e.xxh64 for e in expected.files}, dirs,
+                               operator=expected.operator, hash_date=hash_date)
+    return result
