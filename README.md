@@ -45,6 +45,7 @@ It asks for anything not given as an option:
 | `--operator NAME` | Operator, by name or number from `project.json` (asked if there are several) |
 | `--notes TEXT` | Notes for this card (otherwise asked at the confirmation step) |
 | `--copy-all` | Also copy macOS system files (see below) |
+| `--allow-unverified-drives` | Offload even if a destination's physical disk can't be determined (e.g. a network share) |
 | `--allow-same-volume` | **Testing only.** Allows destinations on the same drive |
 | `--config PATH` | Project config (default `project.json`, given before `ingest`) |
 
@@ -330,6 +331,14 @@ Card folders are named `[SHOW][YYMMDD][CAM][REEL]`, e.g. `ABC261012A01` or
   `/Volumes/<name>` folder on the boot disk.
 - Each copy must go to a **separate physical drive**, and no destination can
   be the source card or inside it. At least two destinations are required.
+  The tool asks macOS which physical disk each volume is on (`diskutil`), so
+  two partitions on one drive, or two APFS volumes in one container, don't
+  count as separate. Disk images count as the disk their file lives on. The
+  confirmation screen shows each destination's disk, and the card record and
+  job report say how the check was done. If a destination's disk can't be
+  determined (e.g. a network share), the offload stops unless you add
+  `--allow-unverified-drives`; the record and report then say the check wasn't
+  done.
 - **Space check first.** If any destination lacks room (with files rounded up to
   whole disk blocks, plus a 100 MB margin), nothing is created anywhere.
 - Each source file is read once. The xxHash64 is computed from those bytes as

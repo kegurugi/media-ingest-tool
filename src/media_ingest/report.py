@@ -139,6 +139,7 @@ def _header_fields(record: Dict[str, Any], volumes: List[str]) -> str:
         ("Operator", record.get("operator", "")),
         ("Source volume", record.get("source_volume", "")),
         ("Destinations", " & ".join(volumes)),
+        ("Separate drives", record.get("separate_drives", "")),
         ("Result", record.get("result", "")),
     ]
     rows = "".join(f"<div><dt>{_e(k)}</dt><dd>{_e(v)}</dd></div>" for k, v in fields)

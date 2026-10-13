@@ -27,6 +27,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--notes", help="notes for this card (skips the notes prompt)")
     p.add_argument("--copy-all", action="store_true", help="also copy macOS system files (.Spotlight-V100, ._*, ...)")
     p.add_argument(
+        "--allow-unverified-drives", action="store_true",
+        help="offload even if a destination's physical disk can't be determined (e.g. a network share)",
+    )
+    p.add_argument(
         "--allow-same-volume", action="store_true",
         help="TESTING ONLY: allow destinations on the same drive as each other or the source",
     )

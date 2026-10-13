@@ -125,7 +125,7 @@ def run_ingest(args, p: Prompter) -> int:
     else:
         default = ", ".join(cfg.default_destinations) or None
         drives = [resolve_destination(d) for d in p.ask("Destinations, comma-separated", default).split(",") if d.strip()]
-    preflight(source, drives, args.allow_same_volume)
+    disk_ids = preflight(source, drives, args.allow_same_volume, args.allow_unverified_drives)
 
     if args.camera:
         camera = cfg.camera(args.camera)
@@ -224,7 +224,9 @@ def run_ingest(args, p: Prompter) -> int:
     p.say(f"  Media:   {media_type}")
     p.say(f"  Source:  {source}  ({source_vol}): {len(listing.files):,} files, {format_bytes(listing.total_bytes)}")
     for d in drives:
-        p.say(f"  Target:  {card_dir(d, card, media_type)}")
+        disk = disk_ids.get(d)
+        where = f"   ({disk.description})" if disk and disk.known else ("   (physical disk NOT confirmed)" if disk else "")
+        p.say(f"  Target:  {card_dir(d, card, media_type)}{where}")
     p.say(f"  Operator: {operator}")
     if recopy:
         p.say(f"  Recopy:  the incomplete {card} folders will be moved to _INCOMPLETE (not deleted)")
@@ -258,7 +260,7 @@ def run_ingest(args, p: Prompter) -> int:
                 camera_model=camera.model, camera_description=camera.description, camera_shooter=camera.shooter,
                 operator=operator, notes=notes,
             ),
-            project_history=history_file,
+            project_history=history_file, allow_unverified_drives=args.allow_unverified_drives,
         )
     except KeyboardInterrupt:
         progress.finish()

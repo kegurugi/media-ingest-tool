@@ -25,13 +25,15 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from . import __version__, daily_log, diskio, history, masterlog, xlsx_export
 from .daydetails import PROJECT_DAYS_DIRNAME
 from .copier import CopyResult, ProgressFn, copy_card
 from .errors import CopyError, DestinationExistsError, IngestError, SourceError
 from .incomplete import COPYING, FAILED, MARKER_NAME, Marker, remove_marker, write_marker
+from . import physdisk
+from .physdisk import DiskIdentity
 from .layout import (
     card_record_path,
     card_report_path,
@@ -88,6 +90,8 @@ class OffloadResult:
     elapsed: float = 0.0  # whole offload: checks, copy, verify, metadata
     verify_seconds: Optional[float] = None  # re-reading every destination
     finished_at: Optional[datetime] = None
+    disk_ids: Dict[Path, DiskIdentity] = field(default_factory=dict)
+    drive_check: str = ""  # how the separate-drives rule was checked, for the record and report
 
     @property
     def passed(self) -> bool:
@@ -114,8 +118,21 @@ class OffloadResult:
         return self.copy.bytes_copied / self.copy.elapsed
 
 
-def preflight(source: Path, drives: Sequence[Path], allow_same_volume: bool = False) -> None:
-    """Refuse setups that could lose data or defeat the point of multiple copies."""
+def preflight(
+    source: Path,
+    drives: Sequence[Path],
+    allow_same_volume: bool = False,
+    allow_unverified_drives: bool = False,
+    identify: Callable[[Path], DiskIdentity] = physdisk.identify,
+) -> Dict[Path, DiskIdentity]:
+    """Refuse setups that could lose data or defeat the point of multiple copies.
+
+    Each copy must be on a separate *physical* disk: two partitions on one drive,
+    or two APFS volumes in one container, don't count as separate. A destination
+    whose physical disk can't be determined (e.g. a network share) is refused
+    unless allow_unverified_drives is set. Returns each destination's disk identity
+    (empty with allow_same_volume, which is for testing only).
+    """
     source = Path(source)
     if not source.is_dir():
         raise SourceError(f"Source card {source} not found or not a folder")
@@ -142,6 +159,43 @@ def preflight(source: Path, drives: Sequence[Path], allow_same_volume: bool = Fa
             devices[dev] = d
         if os.stat(src).st_dev in devices:
             raise IngestError(f"Source {src} is on the same drive as destination {devices[os.stat(src).st_dev]}")
+    else:
+        return {}
+    return check_physical_disks(src, [Path(d) for d in drives], allow_unverified_drives, identify)
+
+
+def check_physical_disks(
+    source: Path,
+    drives: Sequence[Path],
+    allow_unverified_drives: bool = False,
+    identify: Callable[[Path], DiskIdentity] = physdisk.identify,
+) -> Dict[Path, DiskIdentity]:
+    """Every destination on its own physical disk(s), none shared with the source."""
+    src = Path(source)
+    ids = {Path(d): identify(Path(d).resolve()) for d in drives}
+    unknown = [(d, i) for d, i in ids.items() if not i.known]
+    if unknown and not allow_unverified_drives:
+        lines = "\n".join(f"  {d}: {i.reason}" for d, i in unknown)
+        raise IngestError(
+            "Can't confirm these destinations are on separate physical drives:\n" + lines + "\n"
+            "Use --allow-unverified-drives to offload anyway; the card's record and report will say "
+            "the separate-drives check wasn't done."
+        )
+    known = [(d, i) for d, i in ids.items() if i.known]
+    for n, (a, ia) in enumerate(known):
+        for b, ib in known[n + 1:]:
+            shared = ia.disks & ib.disks
+            if shared:
+                raise IngestError(
+                    f"{a.name} and {b.name} are on the same physical disk ({', '.join(sorted(shared))}: "
+                    f"{ia.description}). Each copy must go to a separate drive."
+                )
+    src_id = identify(src)
+    for d, i in known:
+        if src_id.known and src_id.disks & i.disks:
+            raise IngestError(f"The source {src} is on the same physical disk as destination {d.name} "
+                              f"({i.description}).")
+    return ids
 
 
 def run_offload(
@@ -158,6 +212,7 @@ def run_offload(
     tools: Optional[ToolStatus] = None,
     job: Optional[JobInfo] = None,
     project_history: Optional[Path] = None,
+    allow_unverified_drives: bool = False,
 ) -> OffloadResult:
     """Offload one card. Returns a result whose .passed says PASS or FAIL.
 
@@ -170,7 +225,7 @@ def run_offload(
     started_at = datetime.now()
     t0 = time.monotonic()
 
-    preflight(source, drives, allow_same_volume)
+    disk_ids = preflight(source, drives, allow_same_volume, allow_unverified_drives)
     if listing is None:
         listing = list_source(source, copy_all=copy_all)
     for d in drives:
@@ -187,6 +242,8 @@ def run_offload(
         drives=drives,
         listing=listing,
         started_at=started_at,
+        disk_ids=disk_ids,
+        drive_check=_drive_check(disk_ids, allow_same_volume),
     )
     marker = Marker(
         card=str(card),
@@ -291,6 +348,15 @@ def _finish(result: OffloadResult, job: Optional[JobInfo], copy_all: bool, t0: f
                                f"Run `mit report {result.card.shoot_date:%m%d%Y}` to retry.")
 
 
+def _drive_check(ids: Dict[Path, DiskIdentity], allow_same_volume: bool) -> str:
+    if allow_same_volume:
+        return "skipped (--allow-same-volume, testing only)"
+    unknown = [d.name for d, i in ids.items() if not i.known]
+    if unknown:
+        return f"NOT CONFIRMED for {', '.join(unknown)} (--allow-unverified-drives)"
+    return "confirmed: " + ", ".join(f"{d.name} on {i.description}" for d, i in ids.items())
+
+
 def _mark_failed(result: OffloadResult, marker: Marker, detail: str) -> None:
     failed = Marker(**{**marker.__dict__, "status": FAILED, "detail": detail})
     for card_dir in result.card_dirs:
@@ -321,6 +387,7 @@ def _card_record(result: OffloadResult, copy_all: bool, job: Optional[JobInfo] =
                 "volume": drive.name,
                 "card_path": str(card_dir.relative_to(drive)),
                 "result": "PASS" if v is not None and v.ok and not result.errors else "FAIL",
+                "physical_disk": (result.disk_ids[drive].description or "unknown") if drive in result.disk_ids else "",
                 "missing_dirs": v.missing_dirs if v else [],
                 "extra_files": v.extra_files if v else [],
                 "ignored_macos_files": len(v.ignored_files) if v else 0,
@@ -368,6 +435,7 @@ def _card_record(result: OffloadResult, copy_all: bool, job: Optional[JobInfo] =
         "algorithm": "xxh64",
         "result": "PASS" if result.passed else "FAIL",
         "errors": list(result.errors),
+        "separate_drives": result.drive_check,
         "copy_all": copy_all,
         "file_count": result.file_count,
         "total_bytes": result.total_bytes,
