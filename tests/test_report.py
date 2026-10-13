@@ -61,7 +61,8 @@ def test_report_contents(passed):
     for expected in ["PASS", "ABC261012A01", "Example Show", "ABC", "A: Sony FX6 (Main cam, Sam)", "10/12/2026",
                      "DIT Name", "A001", "SHOW01_DRV01A & SHOW01_DRV01B", "Clips (2)", "C0001.MP4",
                      "PRIVATE/M4ROOT/CLIP", "B-cam interviews, card ejected mid-clip 0032", "Other files (3)",
-                     "Total size", "Transfer speed", "report generated 2026-10-12 20:00:00", ".DS_Store"]:
+                     "Total size", "Copy", "Verify", "every destination re-read", "Total time",
+                     "report generated 2026-10-12 20:00:00", ".DS_Store"]:
         assert expected in text, expected
     assert html.count('<td class="ok">') == 4 + 6  # 2 clips + 3 other files, x 2 destinations
     assert "Verification failures" not in html
@@ -182,3 +183,17 @@ def test_end_tc_column(passed):
     html = render_card_report(record)
     assert "<th>End TC</th>" in html
     assert "01:00:02:00" in html  # calculated for records made before End TC was stored
+
+
+def test_copy_and_verify_times(passed):
+    r, record = passed
+    assert record["copy_seconds"] > 0 and record["verify_seconds"] > 0
+    assert record["copy_seconds"] + record["verify_seconds"] <= record["elapsed_seconds"]
+    text = text_of(render_card_report(record))
+    assert "Elapsed" not in text and "Transfer speed" not in text
+
+
+def test_old_records_keep_elapsed(passed):
+    record = {k: v for k, v in copy.deepcopy(passed[1]).items() if k != "verify_seconds"}
+    text = text_of(render_card_report(record))
+    assert "Elapsed" in text and "Transfer speed" in text and "Total time" not in text

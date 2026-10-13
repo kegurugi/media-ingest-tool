@@ -85,7 +85,8 @@ class OffloadResult:
     daily_logs: List[Path] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)  # any error means FAIL
     warnings: List[str] = field(default_factory=list)  # problems that don't affect verification
-    elapsed: float = 0.0
+    elapsed: float = 0.0  # whole offload: checks, copy, verify, metadata
+    verify_seconds: Optional[float] = None  # re-reading every destination
     finished_at: Optional[datetime] = None
 
     @property
@@ -210,12 +211,14 @@ def run_offload(
         _mark_failed(result, marker, str(e))
         return result
 
+    verify_start = time.monotonic()
     result.verifications = verify_destinations(
         result.card_dirs,
         expected_files(listing.files, result.copy.hashes),
         expected_dirs=listing.dirs,
         ignore=[MARKER_NAME],
     )
+    result.verify_seconds = time.monotonic() - verify_start
 
     # Metadata comes from the first destination that verified, never the card again.
     verified = next((v.card_dir for v in result.verifications if v.ok), None)
@@ -358,6 +361,7 @@ def _card_record(result: OffloadResult, copy_all: bool, job: Optional[JobInfo] =
         "offload_finished": result.finished_at.isoformat(timespec="seconds") if result.finished_at else "",
         "elapsed_seconds": round(result.elapsed, 3),
         "copy_seconds": round(copy_seconds, 3) if copy_seconds is not None else None,
+        "verify_seconds": round(result.verify_seconds, 3) if result.verify_seconds is not None else None,
         "transfer_speed": round(result.copy_speed) if result.copy else None,
         "tool_version": __version__,
         "algorithm": "xxh64",

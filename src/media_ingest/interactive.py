@@ -590,7 +590,9 @@ def _print_summary(p: Prompter, r: OffloadResult) -> None:
         f"{'PASS' if r.passed else 'FAIL'}  {r.card}  ({r.media_type})",
         f"Files:    {r.file_count:,}",
         f"Size:     {format_bytes(r.total_bytes)}",
-        f"Elapsed:  {_hms(r.elapsed)}" + (f"  (copy {format_bytes(r.copy_speed)}/s)" if r.copy else ""),
+        *([f"Copy:     {_hms(r.copy.elapsed)}  ({format_bytes(r.copy_speed)}/s)"] if r.copy else []),
+        *([f"Verify:   {_hms(r.verify_seconds)}  (every destination re-read)"] if r.verify_seconds is not None else []),
+        f"Total:    {_hms(r.elapsed)}",
     ]
     lines += [f"Report:   {path}" for path in r.reports if "_REPORTS" in path.parts]
     lines += [f"Day log:  {path}" for path in r.daily_logs]

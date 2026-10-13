@@ -250,9 +250,18 @@ def _totals_section(record: Dict[str, Any], clips: List[Dict[str, Any]]) -> str:
         ("Files", f"{record.get('file_count', 0):,}"),
         ("Total size", format_bytes(record.get("total_bytes", 0))),
         ("Total duration", duration),
-        ("Elapsed", hms(record.get("elapsed_seconds"))),
-        ("Transfer speed", f"{format_bytes(speed)}/s" if speed else ""),
     ]
+    if record.get("verify_seconds") is not None and record.get("copy_seconds") is not None:
+        fields += [
+            ("Copy", f"{hms(record['copy_seconds'])}" + (f" ({format_bytes(speed)}/s)" if speed else "")),
+            ("Verify", f"{hms(record['verify_seconds'])} (every destination re-read)"),
+            ("Total time", hms(record.get("elapsed_seconds"))),
+        ]
+    else:  # records from before the copy/verify breakdown was kept
+        fields += [
+            ("Elapsed", hms(record.get("elapsed_seconds"))),
+            ("Transfer speed", f"{format_bytes(speed)}/s" if speed else ""),
+        ]
     skipped = record.get("skipped", [])
     rows = "".join(f"<div><dt>{_e(k)}</dt><dd>{_e(v)}</dd></div>" for k, v in fields)
     skipped_html = (

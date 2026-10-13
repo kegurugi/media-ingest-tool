@@ -88,7 +88,9 @@ report travels with the media. It shows:
 - the header: project, card, camera, shoot date, offload time, operator,
   source and destination volumes, and a large PASS/FAIL banner;
 - a clip table with metadata and a verification column per destination;
-- other files (sidecars, proxies, ...), totals and notes.
+- other files (sidecars, proxies, ...), totals and notes. Totals show the
+  copy time and speed, the verify time (every destination re-read) and the
+  total time.
 
 On a FAIL, every failed file is listed first in red. A copy that fails partway
 also gets a FAIL report, with files marked NOT VERIFIED. Stills cards with more

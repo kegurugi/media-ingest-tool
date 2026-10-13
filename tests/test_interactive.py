@@ -84,6 +84,7 @@ def test_ingest_pass(ingest, sample_card, drives):
     assert "Card name ABC261012A01" in prompts[0]
     assert "[VIDEO]" in prompts[1]
     assert "PASS  ABC261012A01" in output
+    assert "Copy:     00:00:" in output and "Verify:   00:00:" in output and "Total:    00:00:" in output
     for d in drives:
         assert (d / "10122026/VIDEO/ABC261012A01/PRIVATE/M4ROOT/CLIP/C0001.MP4").exists()
 
