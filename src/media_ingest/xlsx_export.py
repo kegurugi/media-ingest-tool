@@ -98,12 +98,12 @@ def export_xlsx(drive: Path, now: Optional[datetime] = None) -> Path:
     drive = require_mounted(drive)
     now = now or datetime.now()
     with contextlib.closing(connect(drive)) as conn:
-        offloads = conn.execute("SELECT * FROM offloads ORDER BY shoot_date, offload_started").fetchall()
+        offloads = conn.execute("SELECT * FROM offloads ORDER BY shoot_date, offload_started, id").fetchall()
         superseded = {r["id"] for r in offloads if r["superseded"]}
         failed_offloads = {r["id"] for r in offloads if r["drive_result"] != "PASS"}
         clips = conn.execute(
             """SELECT c.* FROM clips c JOIN offloads o ON o.id = c.offload_id
-               ORDER BY c.shoot_date, c.card, o.offload_started, c.rel_path"""
+               ORDER BY c.shoot_date, c.card, o.offload_started, o.id, c.rel_path"""
         ).fetchall()
         days = _days(conn)
         show = conn.execute("SELECT show_code, project_name FROM offloads ORDER BY offload_started DESC LIMIT 1").fetchone()
