@@ -214,3 +214,27 @@ def test_argument_errors(drives, capsys):
     assert verify("--drive", drives[0].parent / "GONE") == 2
     err = capsys.readouterr().err
     assert "--date needs --drive" in err and "not found" in err
+
+
+def test_card_mid_offload_or_interrupted_is_not_passed(sample_card, drives):
+    """Seen in the field test: `mit verify` started while the offload was writing its records."""
+    from media_ingest.incomplete import read_marker
+
+    def interrupt(done, total, rel):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_offload(sample_card, drives, CardName.parse("ABC261012A01"), "VIDEO", allow_same_volume=True,
+                    progress=interrupt)
+    folder = drives[0] / "10122026/VIDEO/ABC261012A01"
+    assert read_marker(folder).status == "COPYING"
+    with pytest.raises(IngestError, match="nothing to verify against"):
+        check_card(folder)  # no record or log entry yet
+    # Once an earlier attempt is in the log, a new COPYING attempt must not be checked against it.
+    for d in drives:
+        (d / "10122026/VIDEO/ABC261012A01").rename(d / "moved-aside")
+    assert offload(sample_card, drives).passed
+    marker = folder / ".mit_incomplete.json"
+    marker.write_text('{"card": "ABC261012A01", "status": "COPYING", "started_at": "2026-10-13T14:16:00"}')
+    check = check_card(folder)
+    assert not check.passed and "still being offloaded (started 2026-10-13T14:16:00)" in check.problems[0]

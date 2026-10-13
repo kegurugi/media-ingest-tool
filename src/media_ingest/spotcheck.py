@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from . import __version__
 from .config import MEDIA_TYPES
 from .errors import IngestError, NamingError
-from .incomplete import MARKER_NAME, read_marker
+from .incomplete import COPYING, MARKER_NAME, read_marker
 from .layout import REPORTS_DIRNAME, card_record_path, master_log_path
 from .masterlog import connect
 from .naming import CardName, parse_date_folder
@@ -229,6 +229,13 @@ def check_card(folder: Path, drive: Optional[Path] = None, card: Optional[CardNa
         check.problems.append(MISSING_FOLDER)
         return check
     marker = read_marker(folder)
+    if marker is not None and marker.status == COPYING:
+        # Either an offload is writing this card right now, or one was interrupted. Its
+        # record and log entry may not exist yet, so there's nothing reliable to check against.
+        check.problems.append(
+            f"The card is still being offloaded (started {marker.started_at}), or that offload was "
+            "interrupted. Check again once it has finished; if it was interrupted, recopy the card.")
+        return check
     if marker is not None:
         check.notes.append(f"The card folder is marked incomplete ({marker.status}).")
 
