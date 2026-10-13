@@ -42,6 +42,7 @@ class Marker:
     started_at: str  # ISO 8601, local time
     tool_version: str
     detail: str = ""
+    notes: str = ""  # the operator's card notes, offered again on a recopy
 
 
 @dataclass
@@ -68,7 +69,7 @@ def read_marker(card_dir: Path) -> Optional[Marker]:
                       file_count=0, total_bytes=0, started_at="", tool_version="")
     known = {k: data.get(k) for k in Marker.__dataclass_fields__ if k in data}
     defaults = dict(card=Path(card_dir).name, status=COPYING, source_volume="", file_count=0,
-                    total_bytes=0, started_at="", tool_version="")
+                    total_bytes=0, started_at="", tool_version="", notes="")
     return Marker(**{**defaults, **known})
 
 

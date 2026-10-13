@@ -284,3 +284,54 @@ def test_new_day_carries_forward_and_can_be_edited(ingest, sample_card, drives, 
     assert [(f["label"], f["value"]) for f in data["header_fields"]] == [("Season", "12"), ("Location", "Ridge Camp"), ("Unit", "2")]
     text = (drives[0] / "_REPORTS/10112026/10112026_daily_card_log.html").read_text()
     assert "Ridge Camp" in text and "Unit" in text
+
+
+
+def _failed_offload(sample_card, drives, notes, monkeypatch):
+    from media_ingest import offload as offload_mod
+    from media_ingest.offload import JobInfo
+    real = offload_mod.copy_card
+
+    def corrupt(listing, card_dirs, **kw):
+        r = real(listing, card_dirs, **kw)
+        (card_dirs[0] / "PRIVATE/M4ROOT/MEDIAPRO.XML").write_bytes(b"x" * 15)
+        return r
+
+    monkeypatch.setattr(offload_mod, "copy_card", corrupt)
+    assert not run_offload(sample_card, drives, CardName.parse("ABC261012A01"), "VIDEO",
+                           allow_same_volume=True, job=JobInfo(show_code="ABC", camera_id="A", notes=notes)).passed
+    monkeypatch.setattr(offload_mod, "copy_card", real)
+
+
+def test_recopy_offers_earlier_notes(ingest, sample_card, drives, monkeypatch):
+    _failed_offload(sample_card, drives, "Mixed Resolution Clips", monkeypatch)
+    # same card: y; media: Enter; (notes: Enter keeps the earlier ones); start: y
+    code, output, prompts = ingest(sample_card, ["y", "", "y"])
+    assert code == 0, output
+    assert "Notes for this card [Mixed Resolution Clips]" in prompts[-2]
+    record = json.loads((drives[0] / "_REPORTS/10122026/ABC261012A01_card.json").read_text())
+    assert record["notes"] == "Mixed Resolution Clips"
+
+
+def test_recopy_notes_can_be_replaced_or_cleared(ingest, sample_card, drives, monkeypatch):
+    _failed_offload(sample_card, drives, "Mixed Resolution Clips", monkeypatch)
+    code, output, _ = ingest(sample_card, ["y", "", "y"], notes="-")
+    assert code == 0, output
+    record = json.loads((drives[0] / "_REPORTS/10122026/ABC261012A01_card.json").read_text())
+    assert record["notes"] == ""
+
+
+def test_interrupted_copy_keeps_notes_in_marker(ingest, sample_card, drives):
+    from media_ingest.offload import JobInfo
+    from media_ingest.incomplete import read_marker
+
+    def interrupt(done, total, rel):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run_offload(sample_card, drives, CardName.parse("ABC261012A01"), "VIDEO", allow_same_volume=True,
+                    progress=interrupt, job=JobInfo(show_code="ABC", camera_id="A", notes="Card ejected mid-clip"))
+    assert read_marker(drives[0] / "10122026/VIDEO/ABC261012A01").notes == "Card ejected mid-clip"
+    code, output, prompts = ingest(sample_card, ["y", "", "y"])
+    assert code == 0, output
+    assert "[Card ejected mid-clip]" in prompts[-2]

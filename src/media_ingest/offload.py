@@ -196,6 +196,7 @@ def run_offload(
         total_bytes=listing.total_bytes,
         started_at=started_at.isoformat(timespec="seconds"),
         tool_version=__version__,
+        notes=job.notes if job else "",
     )
     for d in drives:
         prepare_drive(d, card.shoot_date)

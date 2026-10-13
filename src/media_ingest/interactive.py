@@ -14,7 +14,7 @@ from .daydetails import DayDetails, carried_forward, project_days_dir, read_day,
 from .config import MEDIA_TYPES, load_config
 from .errors import ConfigError, IngestError, NamingError
 from .incomplete import find_incomplete_all, marker_differences, quarantine
-from .layout import card_dir, reports_dir
+from .layout import card_dir, card_record_path, reports_dir
 from .mediatype import choice_warnings, propose_media_type, scan_card
 from .metadata import clip_datetimes, find_tools, read_exif, select_clips
 from .naming import MAX_REEL, CardName
@@ -228,7 +228,14 @@ def run_ingest(args, p: Prompter) -> int:
     p.say(f"  Operator: {operator}")
     if recopy:
         p.say(f"  Recopy:  the incomplete {card} folders will be moved to _INCOMPLETE (not deleted)")
-    notes = args.notes if args.notes is not None else p.ask_optional("Notes for this card (optional, Enter to skip)")
+    if args.notes is not None:
+        notes = args.notes
+    elif recopy and _earlier_notes(recopy, drives):
+        earlier = _earlier_notes(recopy, drives)
+        answer = p.ask_optional(f"Notes for this card [{earlier}] (Enter keeps, '-' clears, or type new notes)")
+        notes = "" if answer == "-" else (answer or earlier)
+    else:
+        notes = p.ask_optional("Notes for this card (optional, Enter to skip)")
     if not p.confirm("Start offload?"):
         p.say("Cancelled. Nothing was copied.")
         return EXIT_FAIL
@@ -539,6 +546,24 @@ def _choose_operator(p: Prompter, operators: List[str], given: Optional[str]) ->
         found = match(p.ask("Operator (number or name)"))
         if found:
             return found
+
+
+def _earlier_notes(items, drives) -> str:
+    """Notes from the attempt being recopied: its marker, or else its card record."""
+    for item in items:
+        if item.marker.notes:
+            return item.marker.notes
+    for item in items:
+        drive = next((d for d in drives if _is_within(item.path, d)), None)
+        if drive is None:
+            continue
+        try:
+            notes = read_card_record(card_record_path(drive, item.card)).get("notes", "")
+        except (OSError, ValueError):
+            continue
+        if notes:
+            return notes
+    return ""
 
 
 def _confirm_shoot_date(p: Prompter, given: Optional[str], times: List) -> date:
