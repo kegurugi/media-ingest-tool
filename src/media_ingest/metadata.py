@@ -59,6 +59,7 @@ class ClipMetadata:
     xxh64: str = ""
     duration: Optional[float] = None  # seconds
     start_timecode: str = ""
+    end_timecode: str = ""  # start + duration: the out point, as DaVinci Resolve shows it
     codec: str = ""
     resolution: str = ""
     frame_rate: str = ""
@@ -326,6 +327,10 @@ def extract_clip(
 
     if kind == AUDIO:
         _audio_timecode(clip, path, exif_tags)
+    end = tc.end_timecode(clip.start_timecode, clip.duration, clip.frame_rate)
+    if end:
+        clip.end_timecode = end
+        clip.sources["end_timecode"] = "computed: start TC + duration"
     return clip
 
 

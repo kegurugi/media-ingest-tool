@@ -27,8 +27,9 @@ from .errors import IngestError
 from .fileutil import _fsync_dir
 from .incomplete import INCOMPLETE_DIRNAME
 from .layout import REPORTS_DIRNAME, logs_dir, master_log_path, require_mounted
+from .timecode import end_timecode
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 LOCK_NAME = ".media_log.lock"
 LOCK_TIMEOUT = 60.0
 
@@ -70,7 +71,7 @@ CREATE TABLE clips (
     offload_started TEXT NOT NULL, volume TEXT NOT NULL,
     verification TEXT,            -- on this drive
     rel_path TEXT NOT NULL, filename TEXT, kind TEXT, size INTEGER, xxh64 TEXT,
-    duration REAL, start_timecode TEXT, codec TEXT, resolution TEXT, frame_rate TEXT,
+    duration REAL, start_timecode TEXT, end_timecode TEXT, codec TEXT, resolution TEXT, frame_rate TEXT,
     created TEXT, camera_model TEXT, sample_rate INTEGER, channels INTEGER, notes TEXT
 );
 CREATE INDEX files_offload ON files (offload_id);
@@ -153,6 +154,19 @@ def _copy_existing(src: Path, conn: sqlite3.Connection) -> None:
         source.backup(conn)
 
 
+def _upgrade(conn: sqlite3.Connection) -> None:
+    """Bring a copied log up to the current schema (runs on the temp copy, never in place)."""
+    version = int(conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0])
+    if version < 2:
+        conn.execute("ALTER TABLE clips ADD COLUMN end_timecode TEXT")
+        for row_id, start, duration, rate in conn.execute(
+                "SELECT id, start_timecode, duration, frame_rate FROM clips").fetchall():
+            conn.execute("UPDATE clips SET end_timecode = ? WHERE id = ?",
+                         (end_timecode(start or "", duration, rate), row_id))
+    if version < SCHEMA_VERSION:
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
+
+
 def _init_schema(conn: sqlite3.Connection, volume: str) -> None:
     conn.executescript(_SCHEMA)
     conn.executemany(
@@ -176,6 +190,7 @@ def add_record(drive: Path, record: Dict[str, Any], lock_timeout: float = LOCK_T
         def build(conn: sqlite3.Connection) -> bool:
             if exists:
                 _copy_existing(target, conn)
+                _upgrade(conn)
             else:
                 _init_schema(conn, drive.name)
             return _insert(conn, record, drive.name)
@@ -204,6 +219,7 @@ def rebuild(drive: Path, lock_timeout: float = LOCK_TIMEOUT) -> Tuple[int, Optio
         def build(conn: sqlite3.Connection) -> int:
             if exists:
                 _copy_existing(target, conn)
+                _upgrade(conn)
             else:
                 _init_schema(conn, drive.name)
             return sum(_insert(conn, r, drive.name) for r in records)
@@ -271,13 +287,15 @@ def _insert(conn: sqlite3.Connection, record: Dict[str, Any], volume: str) -> bo
     )
     conn.executemany(
         """INSERT INTO clips (offload_id, card, shoot_date, camera_id, offload_started, volume, verification,
-               rel_path, filename, kind, size, xxh64, duration, start_timecode, codec, resolution, frame_rate,
-               created, camera_model, sample_rate, channels, notes)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               rel_path, filename, kind, size, xxh64, duration, start_timecode, end_timecode, codec, resolution,
+               frame_rate, created, camera_model, sample_rate, channels, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         [
             (offload_id, card, record.get("shoot_date", ""), camera.get("id") or card[9:-2], started, volume,
              status.get(c["rel_path"], "MISSING"), c["rel_path"], c.get("filename"), c.get("kind"), c.get("size"),
-             c.get("xxh64", ""), c.get("duration"), c.get("start_timecode", ""), c.get("codec", ""),
+             c.get("xxh64", ""), c.get("duration"), c.get("start_timecode", ""),
+             c.get("end_timecode") or end_timecode(c.get("start_timecode", ""), c.get("duration"), c.get("frame_rate")),
+             c.get("codec", ""),
              c.get("resolution", ""), c.get("frame_rate", ""), c.get("created", ""), c.get("camera_model", ""),
              c.get("sample_rate"), c.get("channels"), "; ".join(c.get("notes", [])))
             for c in clips

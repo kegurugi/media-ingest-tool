@@ -196,3 +196,19 @@ def test_clips_across_midnight(tmp_path):
     exif = read_exif(tmp_path / "card", [f.rel_path for f, _ in clips])
     proposal = propose_shoot_date(clip_datetimes(exif, clips))
     assert proposal.spans_midnight and proposal.proposed == date(2026, 10, 12)
+
+
+@pytest.mark.parametrize("path, end", [
+    ("PRIVATE/M4ROOT/CLIP/C0001.MP4", "01:02:05:04"),  # 2 s at 25 fps from 01:02:03:04
+    ("OTHER/df.mp4", "01:00:01;02"),  # 30 frames of 29.97 DF from 01:00:00;02
+    ("OTHER/prores.mov", "10:00:01:00"),  # 24 frames of 23.976
+    ("AUDIO/T001.WAV", "01:00:01:00"),  # 1 s of BWF at 25 fps
+])
+def test_end_timecode(clips, path, end):
+    assert clips[path].end_timecode == end
+    assert clips[path].sources["end_timecode"] == "computed: start TC + duration"
+
+
+def test_end_timecode_blank_without_start(clips):
+    assert clips["OTHER/nometa.mp4"].end_timecode == ""
+    assert clips["AUDIO/T003.WAV"].end_timecode == ""

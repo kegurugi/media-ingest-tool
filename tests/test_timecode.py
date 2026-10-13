@@ -54,3 +54,43 @@ def test_bwf_samples():
     assert samples_to_timecode(one_hour, 48000, Fraction(30000, 1001)) == "00:59:56:12"
     assert samples_to_timecode(one_hour + 1919, 48000, Fraction(25)) == "01:00:00:00"  # rounds down
     assert samples_to_timecode(one_hour + 1920, 48000, Fraction(25)) == "01:00:00:01"
+
+
+from media_ingest.timecode import end_timecode, timecode_to_frames
+
+
+@pytest.mark.parametrize("text, nominal, frames, drop", [
+    ("00:00:00:00", 25, 0, False),
+    ("01:00:00:00", 25, 90000, False),
+    ("00:01:00;02", 30, 1800, True),
+    ("00:10:00;00", 30, 17982, True),
+    ("01:00:00;00", 30, 107892, True),
+    ("00:01:00.04", 60, 3600, True),
+])
+def test_timecode_to_frames(text, nominal, frames, drop):
+    assert timecode_to_frames(text, nominal) == (frames, drop)
+    assert frames_to_timecode(frames, nominal, drop).replace(";", text[8]) == text
+
+
+@pytest.mark.parametrize("text", ["", "1:00:00:00", "01:60:00:00", "01:00:00:25", "01-00-00-00"])
+def test_timecode_to_frames_rejects(text):
+    with pytest.raises(ValueError):
+        timecode_to_frames(text, 25)
+
+
+@pytest.mark.parametrize("start, duration, rate, end", [
+    ("07:49:48:17", 21.5215, "24000/1001", "07:50:10:05"),  # real C80 clip
+    ("01:00:00:00", 2.0, "25", "01:00:02:00"),
+    ("01:00:00;00", 60.06, "30000/1001", "01:01:00;02"),  # across a dropped minute
+    ("23:59:59:24", 0.04, "25", "00:00:00:00"),  # wraps at midnight
+])
+def test_end_timecode(start, duration, rate, end):
+    assert end_timecode(start, duration, rate) == end
+
+
+@pytest.mark.parametrize("start, duration, rate", [
+    ("", 2.0, "25"), ("01:00:00:00", None, "25"), ("01:00:00:00", 2.0, ""), ("garbage", 2.0, "25"),
+    ("01:00:00;00", 2.0, "25"),  # drop-frame at 25 fps is impossible
+])
+def test_end_timecode_blank_when_unknown(start, duration, rate):
+    assert end_timecode(start, duration, rate) == ""

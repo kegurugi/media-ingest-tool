@@ -197,3 +197,19 @@ def test_old_records_without_offload_id(sample_card, drives):
     old = {k: v for k, v in record.items() if k != "offload_id"}
     assert add_record(drives[0], old) is True  # identified by card + start time instead
     assert add_record(drives[0], old) is False
+
+
+def test_log_from_before_end_tc_is_upgraded(sample_card, drives, tmp_path):
+    offload_card(sample_card, drives)
+    log = drives[0] / "_LOGS/media_log.sqlite"
+    # Turn it back into a version 1 log (no end_timecode column).
+    with contextlib.closing(sqlite3.connect(log)) as conn:
+        conn.execute("ALTER TABLE clips DROP COLUMN end_timecode")
+        conn.execute("UPDATE clips SET start_timecode = '01:00:00:00', frame_rate = '25', duration = 2.0")
+        conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+        conn.commit()
+    other = write_card(tmp_path / "B001", {"CLIP/C0001.MP4": b"b" * 1000})
+    assert offload_card(other, drives, "ABC261012B01").passed
+    assert rows(drives[0], "SELECT value FROM meta WHERE key = 'schema_version'")[0]["value"] == "2"
+    old = rows(drives[0], "SELECT end_timecode FROM clips WHERE card = 'ABC261012A01'")
+    assert {r["end_timecode"] for r in old} == {"01:00:02:00"}

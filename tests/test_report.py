@@ -174,3 +174,11 @@ def test_mit_report_rebuilds_reports_dir_only(passed, drives, config_file, capsy
 def test_mit_report_with_no_records(drives, config_file, capsys):
     code = main(["--config", str(config_file), "report", "10122026", "--dest", str(drives[0])])
     assert code == 2 and "no card records" in capsys.readouterr().out
+
+
+def test_end_tc_column(passed):
+    record = copy.deepcopy(passed[1])
+    record["clips"][0].update(start_timecode="01:00:00:00", duration=2.0, frame_rate="25", end_timecode="")
+    html = render_card_report(record)
+    assert "<th>End TC</th>" in html
+    assert "01:00:02:00" in html  # calculated for records made before End TC was stored

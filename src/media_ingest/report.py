@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .fileutil import atomic_write_text
 from .space import format_bytes
+from .timecode import end_timecode
 
 OK = "OK"
 STILLS_SUMMARY_THRESHOLD = 100
@@ -55,6 +56,12 @@ def _datetime(iso: str) -> str:
 def _path_breaks(path: str) -> str:
     """Escaped path that may only wrap after a slash."""
     return _e(path).replace("/", "/<wbr>")
+
+
+def clip_end_tc(clip: Dict[str, Any]) -> str:
+    """End TC from the record, or calculated for records made before it was stored."""
+    return clip.get("end_timecode") or end_timecode(
+        clip.get("start_timecode", ""), clip.get("duration"), clip.get("frame_rate"))
 
 
 def _status_cell(status: str) -> str:
@@ -177,14 +184,15 @@ def _clip_table(clips: List[Dict[str, Any]], volumes: List[str], file_status: Di
         rows.append(
             f"<tr{' class=failed' if failed else ''}><td class='num'>{i}</td>"
             f"<td><div class='name'>{_e(c['filename'])}</div><div class='path'>{_path_breaks(folder)}</div></td>"
-            f"<td class='mono'>{_e(c.get('start_timecode'))}</td><td class='mono'>{_e(hms(c.get('duration')))}</td>"
+            f"<td class='mono'>{_e(c.get('start_timecode'))}</td><td class='mono'>{_e(clip_end_tc(c))}</td>"
+            f"<td class='mono'>{_e(hms(c.get('duration')))}</td>"
             f"<td>{_e(c.get('codec'))}</td><td>{_e(c.get('resolution'))}</td><td>{_e(c.get('frame_rate'))}</td>"
             f"<td class='nowrap'>{_e(_datetime(c.get('created', '')))}</td>"
             f"<td class='num'>{_e(format_bytes(c.get('size', 0)))}</td><td class='mono small'>{_e(c.get('xxh64'))}</td>"
             f"{cells}</tr>"
         )
     return (
-        "<div class='table-wrap'><table class='clips'><thead><tr><th>#</th><th>Clip</th><th>Start TC</th><th>Duration</th><th>Codec</th>"
+        "<div class='table-wrap'><table class='clips'><thead><tr><th>#</th><th>Clip</th><th>Start TC</th><th>End TC</th><th>Duration</th><th>Codec</th>"
         f"<th>Resolution</th><th>FPS</th><th>Created</th><th>Size</th><th>xxHash64</th>{head}</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table></div>"
     )

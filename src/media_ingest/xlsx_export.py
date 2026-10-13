@@ -44,6 +44,7 @@ CLIP_COLUMNS: List[Column] = [
     ("Path", TEXT, lambda r: r["rel_path"]),
     ("Type", TEXT, lambda r: r["kind"]),
     ("Start TC", TEXT, lambda r: r["start_timecode"]),
+    ("End TC", TEXT, lambda r: r["end_timecode"]),
     ("Duration", DURATION, lambda r: r["duration"]),
     ("Codec", TEXT, lambda r: r["codec"]),
     ("Resolution", TEXT, lambda r: r["resolution"]),

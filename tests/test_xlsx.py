@@ -59,7 +59,7 @@ def test_sheets_and_title(workbook):
 
 def test_text_cells_keep_their_form(workbook):
     ws = workbook["Clips"]
-    for name in ("Card", "Reel", "Start TC", "xxHash64", "Shoot date", "Created"):
+    for name in ("Card", "Reel", "Start TC", "End TC", "xxHash64", "Shoot date", "Created"):
         for cell in column(ws, name):
             assert cell.number_format == "@", name
             assert cell.value is None or cell.data_type == "s", name

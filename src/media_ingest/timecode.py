@@ -64,3 +64,38 @@ def samples_to_timecode(
     """
     frames = int(Fraction(time_reference) * rate / sample_rate)
     return frames_to_timecode(frames, nominal_fps(rate), drop_frame)
+
+
+def timecode_to_frames(text: str, nominal: int) -> "tuple[int, bool]":
+    """'01:00:00;02' -> (frame count, drop_frame). ';' or '.' before the frames means drop-frame."""
+    text = text.strip()
+    if len(text) != 11 or text[2] != ":" or text[5] != ":" or text[8] not in ":;.,":
+        raise ValueError(f"not a timecode: {text!r}")
+    drop_frame = text[8] in ";.,"
+    hh, mm, ss, ff = (int(text[i:i + 2]) for i in (0, 3, 6, 9))
+    if mm > 59 or ss > 59 or ff >= nominal:
+        raise ValueError(f"timecode {text!r} is out of range at {nominal} fps")
+    frames = (hh * 3600 + mm * 60 + ss) * nominal + ff
+    if drop_frame:
+        if nominal % 30:
+            raise ValueError(f"drop-frame timecode needs 30 or 60 fps, got {nominal}")
+        total_minutes = 60 * hh + mm
+        frames -= (nominal // 15) * (total_minutes - total_minutes // 10)
+    return frames, drop_frame
+
+
+def end_timecode(start: str, duration: Optional[float], frame_rate: Union[str, Fraction, None]) -> str:
+    """End TC = start + duration: the out point, one frame after the last frame (as DaVinci Resolve shows it).
+
+    Blank if the start, duration or frame rate is missing or unusable.
+    """
+    rate = frame_rate if isinstance(frame_rate, Fraction) else parse_rate(frame_rate)
+    if not start or duration is None or rate is None:
+        return ""
+    nominal = nominal_fps(rate)
+    try:
+        start_frames, drop_frame = timecode_to_frames(start, nominal)
+        length = round(Fraction(duration).limit_denominator(1_000_000) * rate)
+        return frames_to_timecode(start_frames + length, nominal, drop_frame)
+    except ValueError:
+        return ""
