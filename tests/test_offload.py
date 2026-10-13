@@ -195,3 +195,22 @@ def test_no_metadata_from_a_failed_copy(sample_card, drives, monkeypatch):
     _after_copy(monkeypatch, corrupt_all)
     r = offload_card(sample_card, drives)
     assert not r.passed and r.clips == []
+
+
+def test_macos_appledouble_files_on_exfat_dont_fail(sample_card, drives, monkeypatch):
+    """Real exFAT drives get a ._ companion for every file and folder macOS creates (it
+    stores the com.apple.provenance attribute there). Seen in the FX6 field test."""
+    def add_appledouble(card_dirs):
+        for card_dir in card_dirs:
+            for path in [card_dir, *card_dir.rglob("*")]:
+                if path != card_dir:
+                    (path.parent / f"._{path.name}").write_bytes(b"\0\5\26\7" + b"\0" * 80)
+
+    _after_copy(monkeypatch, add_appledouble)
+    r = offload_card(sample_card, drives)
+    assert r.passed, r.verifications[0].extra_files
+    assert r.verifications[0].ignored_files and not r.verifications[0].extra_files
+    assert "._.mit_incomplete.json" in r.verifications[0].ignored_files
+    record = read_card_record(drives[0] / "_REPORTS/10122026/ABC261012A01_card.json")
+    assert record["destinations"][0]["ignored_macos_files"] == len(r.verifications[0].ignored_files)
+    assert record["clips"]  # metadata extracted once the copy verifies

@@ -319,6 +319,7 @@ def _card_record(result: OffloadResult, copy_all: bool, job: Optional[JobInfo] =
                 "result": "PASS" if v is not None and v.ok and not result.errors else "FAIL",
                 "missing_dirs": v.missing_dirs if v else [],
                 "extra_files": v.extra_files if v else [],
+                "ignored_macos_files": len(v.ignored_files) if v else 0,
             }
         )
     statuses = {cd: (by_dir[cd].statuses() if cd in by_dir else None) for cd in result.card_dirs}

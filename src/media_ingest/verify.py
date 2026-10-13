@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 from . import diskio
+from .sources import is_macos_clutter
 
 OK = "OK"
 MISMATCH = "MISMATCH"  # hash differs
@@ -42,6 +43,9 @@ class DestinationVerification:
     checks: List[FileCheck] = field(default_factory=list)
     missing_dirs: List[str] = field(default_factory=list)
     extra_files: List[str] = field(default_factory=list)
+    # macOS clutter found in the folder (e.g. the ._ AppleDouble files macOS
+    # writes next to every new file on exFAT). Not media, so not a failure.
+    ignored_files: List[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -110,8 +114,12 @@ def verify_destination(
         for name in filenames:
             rel = str(rel_dir / name)
             if rel not in known:
-                result.extra_files.append(rel)
+                if any(is_macos_clutter(part) for part in PurePosixPath(rel).parts):
+                    result.ignored_files.append(rel)
+                else:
+                    result.extra_files.append(rel)
     result.extra_files.sort()
+    result.ignored_files.sort()
     return result
 
 
