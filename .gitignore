@@ -9,3 +9,4 @@ dist/
 project_history.sqlite
 .project_history.lock
 project_history.sqlite.damaged-*
+field-test/
