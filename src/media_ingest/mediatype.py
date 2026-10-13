@@ -31,7 +31,8 @@ STILLS_EXTENSIONS = frozenset(
 
 # Camera folder structures that mark a video card. Images inside these trees
 # are thumbnails, not stills, and are not counted as stills.
-VIDEO_STRUCTURES = ("PRIVATE/M4ROOT", "PRIVATE/XDROOT", "PRIVATE/AVCHD", "XDROOT", "CONTENTS")
+# Canon C80/C70: XFVC (XF-AVC S / XF-HEVC S MP4), CRM (Cinema RAW Light), CONTENTS (XF-AVC MXF).
+VIDEO_STRUCTURES = ("PRIVATE/M4ROOT", "PRIVATE/XDROOT", "PRIVATE/AVCHD", "XDROOT", "XFVC", "CRM", "CONTENTS")
 
 
 @dataclass

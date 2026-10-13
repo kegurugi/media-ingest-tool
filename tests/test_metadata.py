@@ -7,6 +7,7 @@ from datetime import date, datetime
 import pytest
 
 from media_ingest.metadata import (
+    camera_model,
     ToolStatus,
     clip_datetimes,
     extract_card,
@@ -162,6 +163,16 @@ def test_still(clips):
     assert c.camera_model == "SONY ILCE-7SM3"
     assert (c.resolution, c.codec) == ("64x48", "JPEG")
     assert c.duration is None and c.start_timecode == ""
+
+
+@pytest.mark.parametrize("make, model, expected", [
+    ("Canon", "Canon EOS C80", "Canon EOS C80"),
+    ("SONY", "ILCE-7SM3", "SONY ILCE-7SM3"),
+    ("", "ILCE-7SM3", "ILCE-7SM3"),
+    ("Canon", "", "Canon"),
+])
+def test_camera_model(make, model, expected):
+    assert camera_model({"Make": make, "Model": model}) == expected
 
 
 def test_missing_tools_give_blank_fields(card):

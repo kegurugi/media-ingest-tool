@@ -179,6 +179,14 @@ def created_from_exif(tags: Dict[str, Any], kind: str) -> Tuple[Optional[str], s
     return None, ""
 
 
+def camera_model(tags: Dict[str, Any]) -> str:
+    """'SONY' + 'ILCE-7SM3' -> 'SONY ILCE-7SM3'; 'Canon' + 'Canon EOS C80' -> 'Canon EOS C80'."""
+    make, model = str(tags.get("Make") or "").strip(), str(tags.get("Model") or "").strip()
+    if make and model.lower().startswith(make.lower()):
+        return model
+    return " ".join(p for p in (make, model) if p)
+
+
 def clip_datetimes(exif: Dict[str, Dict[str, Any]], clips: List[Tuple[SourceFile, str]]) -> List[datetime]:
     """Clip creation times as the camera wrote them, for proposing the shoot date."""
     times = []
@@ -275,8 +283,7 @@ def extract_clip(
 
     created, created_src = created_from_exif(exif_tags, kind)
     put("created", created, created_src)
-    model = " ".join(str(exif_tags[t]) for t in ("Make", "Model") if exif_tags.get(t))
-    put("camera_model", model, SRC_EXIF)
+    put("camera_model", camera_model(exif_tags), SRC_EXIF)
 
     if kind == STILL:
         width = exif_tags.get("ExifImageWidth") or exif_tags.get("ImageWidth")

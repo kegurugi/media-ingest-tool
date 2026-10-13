@@ -62,6 +62,23 @@ def test_canon_card(canon):
     assert propose_media_type(scan).media_type == "VIDEO"
 
 
+def test_canon_c80_mp4_card(tmp_path):
+    # Layout of a real C80 card recording XF-AVC S MP4, with empty folders for the other formats.
+    root = card(
+        tmp_path / "c80",
+        "XFVC/REEL_0017/A_0017C074A260814_132901YK_CANON.MP4",
+        "XFVC/REEL_0017/A_0017C074A260814_132901YK_CANON.XML",
+        "XFVC/REEL_0017/A_0017C074A260814_132901YK_CANON.CPF",
+        "XFVC/CANONMSC/M10017.CTG",
+    )
+    for d in ("CONTENTS/CLIPS001", "CRM/CANONMSC", "DCIM/CANONMSC", "MISC"):
+        (root / d).mkdir(parents=True)
+    scan = scan_card(root)
+    assert (scan.video, scan.stills, scan.other) == (1, 0, 3)
+    assert "XFVC" in scan.structures
+    assert propose_media_type(scan).media_type == "VIDEO"
+
+
 def test_audio_card(tmp_path):
     scan = scan_card(card(tmp_path / "s", "261012_001.WAV", "261012_002.WAV", "SETTINGS.TXT"))
     assert (scan.audio, scan.other) == (2, 1)
