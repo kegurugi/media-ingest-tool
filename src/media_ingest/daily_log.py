@@ -241,8 +241,9 @@ def render(day: DayData, details: Optional[DayDetails], generated_at: Optional[d
         + "</tr>"
         for d in day.drives
     )
-    parts.append("<table class='drives'><thead><tr><th>Drive</th><th>Running total on drive (through this date)</th>"
-                 f"<th>Capacity</th><th>Free (at {generated_at:%m/%d %H:%M})</th></tr></thead>"
+    parts.append("<table class='drives'><colgroup><col class='drive'><col><col><col></colgroup>"
+                 "<thead><tr><th>Drive</th><th class='num'>Running total<br>(through this date)</th>"
+                 f"<th class='num'>Capacity</th><th class='num'>Free<br>(at {generated_at:%m/%d %H:%M})</th></tr></thead>"
                  f"<tbody>{drive_rows}</tbody></table>")
 
     parts.append("<h2>Camera Notes</h2>")
@@ -333,7 +334,9 @@ table { width:100%; border-collapse:collapse; }
 td, th { padding:3px 6px; border-bottom:1px solid var(--line); text-align:left; }
 th { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); }
 .camera table td:first-child { padding-left:18px; }
-td.num { text-align:right; white-space:nowrap; }
+td.num, th.num { text-align:right; white-space:nowrap; }
+.drives { table-layout:fixed; } .drives col { width:20%; } .drives col.drive { width:40%; }
+.drives th { vertical-align:bottom; }
 td.ok { color:var(--pass); font-weight:700; } td.bad { color:#fff; background:var(--fail); font-weight:700; }
 tr.failed td { background:var(--fail-bg); } tr.failed td.bad { background:var(--fail); }
 .mono { font-family:"SF Mono", Menlo, Consolas, monospace; }
