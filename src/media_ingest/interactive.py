@@ -9,7 +9,8 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, List, Optional, TextIO
 
-from . import history, masterlog
+from . import daily_log, history, masterlog
+from .daydetails import DayDetails, carried_forward, project_days_dir, read_day, write_day
 from .config import MEDIA_TYPES, load_config
 from .errors import ConfigError, IngestError, NamingError
 from .incomplete import find_incomplete_all, marker_differences, quarantine
@@ -151,6 +152,21 @@ def run_ingest(args, p: Prompter) -> int:
     exif = read_exif(source, [f.rel_path for f, _ in clips], tools.exiftool)
     shoot_date = _confirm_shoot_date(p, args.date, clip_datetimes(exif, clips))
 
+    # Day details (header fields, crew) are confirmed on the first offload of each day.
+    days_dir = project_days_dir(args.config)
+    day, day_notes = read_day(drives, shoot_date, days_dir)
+    for note in day_notes:
+        p.say(f"  note: {note}")
+    new_day = day is None
+    if new_day:
+        day = carried_forward(drives, shoot_date, days_dir, cfg)
+        origin = ("project.json" if day.carried_from == "project.json"
+                  else f"carried forward from {date.fromisoformat(day.carried_from):%m/%d/%Y}")
+        p.say(f"\nDay details for {shoot_date:%m/%d/%Y} ({origin}):")
+        _show_day(p, day)
+        if not p.confirm(f"Use these for {shoot_date:%m/%d/%Y}?", default=True):
+            edit_day(p, day)
+
     # Recopy of an incomplete or failed card keeps its reel number.
     card: Optional[CardName] = None
     recopy = []
@@ -218,6 +234,8 @@ def run_ingest(args, p: Prompter) -> int:
         return EXIT_FAIL
 
     require_space(listing, drives)  # before moving anything aside
+    for problem in write_day(drives, day, days_dir, stamp=new_day):
+        p.say(f"  warning: {problem}")
     for item in recopy:
         drive = next(d for d in drives if _is_within(item.path, d))
         moved = quarantine(item, drive)
@@ -248,9 +266,8 @@ def run_ingest(args, p: Prompter) -> int:
 
 
 def run_report(args, p: Prompter) -> int:
-    """Rebuild the job reports in _REPORTS/<date>/ from the card records on each destination.
-
-    The report copies inside card folders are left exactly as written at offload.
+    """Rebuild the job reports in _REPORTS/<date>/ from the card records on each destination,
+    then the daily card log. The report copies inside card folders are left exactly as written.
     """
     shoot_date = parse_shoot_date(args.date)
     names = args.dest or load_config(args.config).default_destinations
@@ -274,6 +291,12 @@ def run_report(args, p: Prompter) -> int:
         if not records:
             p.say(f"  {drive}: no card records for {shoot_date:%m/%d/%Y}")
     p.say(f"Rebuilt {rebuilt} report(s).")
+    if rebuilt:
+        written, problems = daily_log.write_daily_log(drives, shoot_date, project_days_dir(args.config))
+        for path in written:
+            p.say(f"  {path}")
+        for problem in problems:
+            p.say(f"  warning: {problem}")
     return EXIT_PASS if rebuilt else EXIT_ERROR
 
 
@@ -346,6 +369,77 @@ def run_history(args, p: Prompter) -> int:
     p.say(f"  Project total: {sum(t[0] for t in totals.values())} card(s), "
           f"{format_bytes(sum(t[1] for t in totals.values()))}")
     return EXIT_PASS
+
+
+def run_daylog(args, p: Prompter) -> int:
+    """Edit a day's header fields, crew and day notes, then rebuild its daily card log."""
+    cfg = load_config(args.config)
+    shoot_date = parse_shoot_date(args.date)
+    drives = [resolve_destination(d) for d in (args.dest or cfg.default_destinations)]
+    for d in drives:
+        if not d.is_dir():
+            p.say(f"  {d}: not mounted; it will be updated next time it's connected and the log is rebuilt")
+    days_dir = project_days_dir(args.config)
+    day, notes = read_day(drives, shoot_date, days_dir)
+    for note in notes:
+        p.say(f"  note: {note}")
+    if day is None:
+        day = carried_forward(drives, shoot_date, days_dir, cfg)
+        p.say(f"No details saved for {shoot_date:%m/%d/%Y} yet; starting from "
+              + ("project.json" if day.carried_from == "project.json"
+                 else f"{date.fromisoformat(day.carried_from):%m/%d/%Y}"))
+    p.say(f"\nDay details for {shoot_date:%m/%d/%Y}:")
+    _show_day(p, day)
+    if args.notes is not None:
+        day.day_notes = args.notes
+    else:
+        if p.confirm("Edit header fields and crew?"):
+            edit_day(p, day)
+        current = f" [{day.day_notes}]" if day.day_notes else ""
+        text = p.ask_optional(f"Day notes{current} (Enter keeps, '-' clears)")
+        if text == "-":
+            day.day_notes = ""
+        elif text:
+            day.day_notes = text
+    problems = write_day(drives, day, days_dir)
+    written, more = daily_log.write_daily_log(drives, shoot_date, days_dir)
+    for problem in problems + more:
+        p.say(f"  warning: {problem}")
+    for path in written:
+        p.say(f"  {path}")
+    p.say(f"Saved day details for {shoot_date:%m/%d/%Y}.")
+    return EXIT_PASS
+
+
+def _show_day(p: Prompter, day: DayDetails) -> None:
+    fields = "   ".join(f"{k}: {v}" for k, v in day.header_fields) or "(no header fields)"
+    crew = "   ".join(f"{r}: {n}" for r, n in day.crew) or "(no crew)"
+    p.say(f"  {fields}")
+    p.say(f"  {crew}")
+
+
+def edit_day(p: Prompter, day: DayDetails) -> None:
+    """Walk through header fields and crew: Enter keeps, text replaces, '-' removes; then add new ones."""
+    day.header_fields = _edit_pairs(p, "Header fields", day.header_fields, "label")
+    day.crew = _edit_pairs(p, "Crew", day.crew, "role")
+    day.carried_from = ""
+
+
+def _edit_pairs(p: Prompter, title: str, pairs, key_name: str):
+    p.say(f"{title} (Enter keeps, type to replace, '-' removes):")
+    result = []
+    for key, value in pairs:
+        answer = p.ask_optional(f"  {key} [{value}]")
+        if answer == "-":
+            continue
+        result.append((key, answer or value))
+    while True:
+        key = p.ask_optional(f"  Add to {title.lower()} ({key_name}, or Enter to finish)")
+        if not key:
+            return result
+        value = p.ask_optional(f"  {key}")
+        if value:
+            result.append((key, value))
 
 
 def _choose_operator(p: Prompter, operators: List[str], given: Optional[str]) -> str:
@@ -422,6 +516,7 @@ def _print_summary(p: Prompter, r: OffloadResult) -> None:
         f"Elapsed:  {_hms(r.elapsed)}" + (f"  (copy {format_bytes(r.copy_speed)}/s)" if r.copy else ""),
     ]
     lines += [f"Report:   {path}" for path in r.reports if "_REPORTS" in path.parts]
+    lines += [f"Day log:  {path}" for path in r.daily_logs]
     if r.warnings:
         p.warn_loud(["WARNING", *r.warnings])
     if r.passed:

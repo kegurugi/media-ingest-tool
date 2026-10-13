@@ -10,9 +10,9 @@ from typing import List, Optional
 
 from . import __version__
 from .errors import IngestError
-from .interactive import EXIT_ERROR, Prompter, run_history, run_ingest, run_log, run_report
+from .interactive import EXIT_ERROR, Prompter, run_daylog, run_history, run_ingest, run_log, run_report
 
-_STAGE = {"verify": 7, "daylog": 6}
+_STAGE = {"verify": 7}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,11 +38,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p = sub.add_parser("verify", help="re-hash a card folder against the log")
     p.add_argument("card_folder")
-    p = sub.add_parser("report", help="regenerate the card reports for a date (from the card records)")
+    p = sub.add_parser("report", help="regenerate the card reports and daily card log for a date")
     p.add_argument("date", help="shoot date, MMDDYYYY")
     p.add_argument("--dest", action="append", help="destination volume name or path (default: from project.json)")
-    p = sub.add_parser("daylog", help="edit a day's header fields, crew and notes")
+    p = sub.add_parser("daylog", help="edit a day's header fields, crew and notes, then rebuild its card log")
     p.add_argument("date", help="shoot date, MMDDYYYY")
+    p.add_argument("--dest", action="append", help="destination volume name or path (default: from project.json)")
+    p.add_argument("--notes", help="set the day notes (skips the prompts)")
     p = sub.add_parser("log", help="master log tools")
     log_sub = p.add_subparsers(dest="log_command", metavar="<log command>", required=True)
     for name, help_text in (("export", "regenerate the .xlsx from the SQLite log"),
@@ -63,7 +65,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.command:
         parser.print_help()
         return 2
-    runners = {"ingest": run_ingest, "report": run_report, "log": run_log, "history": run_history}
+    runners = {"ingest": run_ingest, "report": run_report, "log": run_log, "history": run_history,
+               "daylog": run_daylog}
     if args.command in runners:
         try:
             return runners[args.command](args, Prompter())

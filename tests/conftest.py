@@ -62,3 +62,13 @@ def config_file(tmp_path):
     path = tmp_path / "project.json"
     path.write_text(EXAMPLE_CONFIG.read_text())
     return path
+
+
+def save_day_details(config_path, *dates):
+    """Pre-save day details beside a project.json so `mit ingest` doesn't ask about them."""
+    from datetime import date as _date
+    from media_ingest.daydetails import DayDetails, project_days_dir, write_day
+    for d in dates:
+        write_day([], DayDetails(shoot_date=_date.fromisoformat(d).isoformat(),
+                                 header_fields=[("Season", "12")], crew=[("DIT", "DIT Name")]),
+                  project_days_dir(config_path))

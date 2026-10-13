@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
-from conftest import SMALL_CHUNK, write_card
+from conftest import SMALL_CHUNK, save_day_details, write_card
 from media_ingest import history, masterlog
 from media_ingest.cli import main
 from media_ingest.history import history_path, summary, used_reels
@@ -138,6 +138,7 @@ def test_ingest_uses_history_for_reels(kv, cards, tmp_path, monkeypatch, capsys)
     config.parent.mkdir()
     config.write_text((Path(__file__).resolve().parent.parent / "project.example.json").read_text())
     hist = history_path(config)
+    save_day_details(config, "2026-10-12")
     offload(cards[0], kv["DRV01"], "ABC261012A01", hist)
     answers = iter(["", "", "", "y"])
     monkeypatch.setattr("builtins.input", lambda prompt: next(answers))

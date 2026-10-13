@@ -10,7 +10,8 @@ Steps:
   7. Write the card record (hashes, results, metadata) and the job report on
      every destination, plus a report copy inside each card folder.
   8. Add the card to each drive's master log and regenerate its spreadsheet.
-  9. Remove the markers only if everything passed; otherwise mark FAILED.
+  9. Rebuild that day's daily card log on every destination.
+ 10. Remove the markers only if everything passed; otherwise mark FAILED.
 
 A copy that fails partway still gets a FAILED record and report.
 """
@@ -26,7 +27,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from . import __version__, diskio, history, masterlog, xlsx_export
+from . import __version__, daily_log, diskio, history, masterlog, xlsx_export
+from .daydetails import PROJECT_DAYS_DIRNAME
 from .copier import CopyResult, ProgressFn, copy_card
 from .errors import CopyError, DestinationExistsError, IngestError, SourceError
 from .incomplete import COPYING, FAILED, MARKER_NAME, Marker, remove_marker, write_marker
@@ -80,6 +82,7 @@ class OffloadResult:
     card_records: List[Path] = field(default_factory=list)
     reports: List[Path] = field(default_factory=list)
     spreadsheets: List[Path] = field(default_factory=list)
+    daily_logs: List[Path] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)  # any error means FAIL
     warnings: List[str] = field(default_factory=list)  # problems that don't affect verification
     elapsed: float = 0.0
@@ -274,6 +277,14 @@ def _finish(result: OffloadResult, job: Optional[JobInfo], copy_all: bool, t0: f
             result.spreadsheets.append(xlsx_export.export_xlsx(d))
         except (OSError, IngestError, sqlite3.Error) as e:
             result.warnings.append(f"Spreadsheet on {d} was NOT updated: {e}. Run `mit log export` to retry.")
+    project_days = project_history.parent / PROJECT_DAYS_DIRNAME if project_history is not None else None
+    try:
+        written, problems = daily_log.write_daily_log(result.drives, result.card.shoot_date, project_days)
+        result.daily_logs.extend(written)
+        result.warnings.extend(problems)
+    except (OSError, IngestError, sqlite3.Error) as e:
+        result.warnings.append(f"The daily card log was NOT rebuilt: {e}. "
+                               f"Run `mit report {result.card.shoot_date:%m%d%Y}` to retry.")
 
 
 def _mark_failed(result: OffloadResult, marker: Marker, detail: str) -> None:

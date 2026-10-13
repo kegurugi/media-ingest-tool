@@ -8,7 +8,7 @@ def test_no_command_prints_help(capsys):
     assert "ingest" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("argv", [["verify", "X"], ["daylog", "10122026"]])
+@pytest.mark.parametrize("argv", [["verify", "X"]])
 def test_commands_are_stubbed(argv, capsys):
     assert main(argv) == 2
     assert "not implemented yet" in capsys.readouterr().err

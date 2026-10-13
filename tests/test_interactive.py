@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import SMALL_CHUNK, write_card
+from conftest import SMALL_CHUNK, save_day_details, write_card
 from media_ingest import interactive
 from media_ingest.cli import main
 from media_ingest.errors import NamingError
@@ -38,6 +38,8 @@ def test_parse_media_type():
 
 @pytest.fixture
 def ingest(config_file, drives, monkeypatch, capsys):
+    # Day details already confirmed for these dates; tests for the day prompt use other dates.
+    save_day_details(config_file, "2026-10-12", "2026-10-13")
     """Run `mit ingest` with scripted answers. Returns (exit code, stdout+stderr, prompts asked).
 
     The notes answer (blank by default) is inserted before the last answer, which
@@ -254,3 +256,30 @@ def test_unknown_operator(config_file, sample_card, drives, capsys):
     code = main(["--config", str(config_file), "ingest", "--source", str(sample_card), "--dest", str(drives[0]),
                  "--dest", str(drives[1]), "--camera", "A", "--operator", "Nobody", "--allow-same-volume"])
     assert code == 2 and "Operator 'Nobody' is not in project.json" in capsys.readouterr().err
+
+
+def test_first_offload_of_a_new_day_confirms_details(ingest, sample_card, drives, config_file):
+    # 10/10 is before any saved day: shown from project.json, accepted with Enter.
+    code, output, prompts = ingest(sample_card, ["", "", "", "y"], date="10102026")
+    assert code == 0, output
+    assert "Day details for 10/10/2026 (project.json):" in output
+    assert "Season: 12   Location: Base Camp   Leg: 1" in output
+    assert prompts[0] == "Use these for 10/10/2026? [Y/n]: "
+    assert (drives[0] / "_REPORTS/10102026/10102026_day.json").exists()
+    assert f"Source:  {sample_card}" in output
+    # A second card the same day doesn't ask again.
+    code, output, prompts = ingest(sample_card, ["", "", "y"], date="10102026")
+    assert code == 0 and not any("Use these" in p for p in prompts)
+
+
+def test_new_day_carries_forward_and_can_be_edited(ingest, sample_card, drives, config_file):
+    ingest(sample_card, ["", "", "", "y"], date="10102026")
+    # n -> edit: Season keeps, Location replaced, Leg removed, add Unit=2; crew: keep all, add none.
+    answers = ["n", "", "Ridge Camp", "-", "Unit", "2", "", "", "", "", "", "", "", "y"]
+    code, output, prompts = ingest(sample_card, answers, date="10112026")
+    assert code == 0, output
+    assert "Day details for 10/11/2026 (carried forward from 10/10/2026):" in output
+    data = __import__("json").loads((drives[0] / "_REPORTS/10112026/10112026_day.json").read_text())
+    assert [(f["label"], f["value"]) for f in data["header_fields"]] == [("Season", "12"), ("Location", "Ridge Camp"), ("Unit", "2")]
+    text = (drives[0] / "_REPORTS/10112026/10112026_daily_card_log.html").read_text()
+    assert "Ridge Camp" in text and "Unit" in text

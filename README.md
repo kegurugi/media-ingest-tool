@@ -4,11 +4,11 @@ A macOS command-line tool that offloads camera and audio cards to two or more
 destination drives, verifies every copy by checksum, and keeps reports and a
 media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 
-**Status:** build stages 1–5 of 8 are done: config, naming, verified
-multi-destination copying, clip metadata, the per-card job report, and the
-master log with its spreadsheet export. `mit ingest`, `mit report` and
-`mit log` and `mit history` work. The daily card log and `mit verify` come in
-later stages. Sony and
+**Status:** build stages 1–6 of 8 are done: config, naming, verified
+multi-destination copying, clip metadata, the per-card job report, the master
+log with its spreadsheet export and project history, and the daily card log.
+`mit ingest`, `mit report`, `mit daylog`, `mit log` and `mit history` work.
+`mit verify` comes in stage 7. Sony and
 Canon XML sidecars aren't read yet; that waits for real sample cards.
 
 ## Installation
@@ -49,8 +49,8 @@ It asks for anything not given as an option:
 | `--allow-same-volume` | **Testing only.** Allows destinations on the same drive |
 | `--config PATH` | Project config (default `project.json`, given before `ingest`) |
 
-You confirm the shoot date, the card name, the media type and the target paths
-before anything is copied.
+You confirm the shoot date, the day details (first card of a day only), the
+card name, the media type and the target paths before anything is copied.
 
 The **shoot date** is proposed from the earliest clip date on the card (read
 with exiftool, without changing the card). If the clips fall on more than one
@@ -175,6 +175,41 @@ recorded in `project_history.sqlite`, kept on the Mac **next to
 connected drives to the history; this is the recovery path if the Mac's copy is
 lost, for example on a new laptop. It then refreshes those drives' all-drives
 summaries. A damaged history is renamed aside, not deleted.
+
+### Daily card log
+
+`_REPORTS/<date>/<date>_daily_card_log.html` replaces the hand-written card
+log. It's rebuilt on every destination after each offload for that date, by
+`mit report <date>`, and by `mit daylog <date>`. It shows:
+- the show, the day's header fields (Season, Location, Leg, ...), crew, shoot
+  date and drive names;
+- a PASS/FAIL status (PASS only if every card that day passed), with failed
+  cards listed;
+- one line per camera, e.g. *Cam D: 1 Card, 64.10 GB (Timelapse, Shooter
+  Name)*, with each card listed under it;
+- totals: cards and GB for the day, the running total on each drive and the
+  project total across all drives (both up to and including that date), and
+  each drive's capacity and free space;
+- camera notes (each card's notes) and day notes.
+
+If the destinations disagree on any total, or one isn't connected, the page
+says so. It prints on one portrait page for a typical day (Print > Save as PDF).
+If a day is split across drive sets, each set's log covers the cards it holds.
+
+**Day details.** Header fields and crew change during a season, so they're
+saved per day: in `_REPORTS/<date>/<date>_day.json` on every destination and
+in `days/` next to `project.json`. On the first offload of a new day, `mit
+ingest` shows the previous day's details (or `project.json`'s on the first day)
+and asks *"Use these for 10/13/2026? [Y/n]"*. Answering **n** walks through
+each field: Enter keeps it, typing replaces it, `-` removes it, and you can add
+new fields at the end. Later cards that day don't ask again.
+
+```bash
+.venv/bin/mit daylog 10132026
+```
+
+edits a day's header fields, crew and day notes at any time and rebuilds its
+log. `--notes "..."` sets the day notes without prompts.
 
 ### Card record
 
