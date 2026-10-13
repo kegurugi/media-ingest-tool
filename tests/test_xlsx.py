@@ -47,7 +47,7 @@ def column(ws, name):
 
 
 def test_sheets_and_title(workbook):
-    assert workbook.sheetnames == ["Clips", "Cards", "Days"]
+    assert workbook.sheetnames == ["Clips", "Cards", "Days", "All drives"]
     for ws in workbook:
         title = ws["A1"].value
         assert "SHOW01_DRV01A" in title and "ABC Example Show" in title and "exported 2026-10-13 09:30" in title
@@ -90,11 +90,13 @@ def test_failed_rows_are_red(workbook):
 
 def test_days_with_running_total(workbook):
     days = workbook["Days"]
-    values = [[c.value for c in row] for row in days.iter_rows(min_row=3)]
-    assert [v[0] for v in values] == ["2026-10-12", "2026-10-13"]
-    assert [v[1] for v in values] == [2, 1]
-    assert values[1][4] == pytest.approx(values[0][3] + values[1][3])
-    assert values[0][5] == 1  # one failed card on 10/12 on this drive
+    h = header(days)
+    values = [dict(zip(h, (c.value for c in row))) for row in days.iter_rows(min_row=3)]
+    assert [v["Shoot date"] for v in values] == ["2026-10-12", "2026-10-13"]
+    assert [v["Cards"] for v in values] == [2, 1]
+    assert values[1]["Running total GB on drive"] == pytest.approx(values[0]["GB that day"] + values[1]["GB that day"])
+    assert values[0]["Failed cards"] == 1  # one failed card on 10/12 on this drive
+    assert values[0]["Project total GB (all drives)"] is None  # no project history in this test
 
 
 def test_export_replaces_atomically(sample_card, drives, monkeypatch):

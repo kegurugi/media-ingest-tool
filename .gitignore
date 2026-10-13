@@ -6,3 +6,6 @@ __pycache__/
 build/
 dist/
 .DS_Store
+project_history.sqlite
+.project_history.lock
+project_history.sqlite.damaged-*

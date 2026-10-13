@@ -12,24 +12,20 @@ superseded and left out of totals.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
 import sqlite3
-import tempfile
-import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from .errors import IngestError
-from .fileutil import _fsync_dir
+from .sqlitesafe import LogError, connect_readonly, copy_into, is_healthy, locked, replace_db, set_aside_if_damaged
 from .incomplete import INCOMPLETE_DIRNAME
 from .layout import REPORTS_DIRNAME, logs_dir, master_log_path, require_mounted
 from .timecode import end_timecode
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 LOCK_NAME = ".media_log.lock"
 LOCK_TIMEOUT = 60.0
 
@@ -74,84 +70,22 @@ CREATE TABLE clips (
     duration REAL, start_timecode TEXT, end_timecode TEXT, codec TEXT, resolution TEXT, frame_rate TEXT,
     created TEXT, camera_model TEXT, sample_rate INTEGER, channels INTEGER, notes TEXT
 );
+CREATE TABLE project_summary (  -- copied from the project history on the Mac: every drive set
+    drive_set TEXT NOT NULL, shoot_date TEXT NOT NULL,
+    cards INTEGER, clips INTEGER, bytes INTEGER, failed INTEGER,
+    PRIMARY KEY (drive_set, shoot_date)
+);
 CREATE INDEX files_offload ON files (offload_id);
 CREATE INDEX clips_offload ON clips (offload_id);
 CREATE INDEX offloads_date ON offloads (shoot_date);
 """
 
 
-class LogError(IngestError):
-    """The master log couldn't be read or written."""
-
-
-# --- locking and atomic replacement -----------------------------------------
-
 @contextmanager
 def _locked(drive: Path, timeout: float) -> Iterator[None]:
-    logs = logs_dir(drive)
-    logs.mkdir(exist_ok=True)
-    fd = os.open(logs / LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o644)
-    try:
-        deadline = time.monotonic() + timeout
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise LogError(f"The master log on {drive} is busy (another offload is writing it)") from None
-                time.sleep(0.1)
-        try:
-            yield
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-    finally:
-        os.close(fd)
-
-
-def _connect_readonly(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
-
-
-def is_healthy(path: Path) -> bool:
-    try:
-        with contextlib.closing(_connect_readonly(path)) as conn:
-            return conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-    except sqlite3.Error:
-        return False
-
-
-def _replace_log(drive: Path, build) -> Any:
-    """Build a new log in a temp file (build(conn) does the work), then swap it in."""
-    target = master_log_path(drive)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
-    os.close(fd)
-    tmp = Path(tmp_name)
-    try:
-        conn = sqlite3.connect(tmp)
-        try:
-            conn.execute("PRAGMA journal_mode=MEMORY")  # the temp file is disposable; no journal on the drive
-            result = build(conn)
-            conn.commit()
-            if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-                raise LogError("integrity check failed on the new log")
-        finally:
-            conn.close()
-        with open(tmp, "rb+") as f:
-            os.fsync(f.fileno())
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, target)
-    except BaseException:
-        with contextlib.suppress(FileNotFoundError):
-            tmp.unlink()  # our own half-built temp file
-        raise
-    _fsync_dir(target.parent)
-    return result
-
-
-def _copy_existing(src: Path, conn: sqlite3.Connection) -> None:
-    with contextlib.closing(_connect_readonly(src)) as source:
-        source.backup(conn)
+    with locked(logs_dir(drive) / LOCK_NAME, timeout,
+                f"The master log on {drive} is busy (another offload is writing it)"):
+        yield
 
 
 def _upgrade(conn: sqlite3.Connection) -> None:
@@ -163,8 +97,23 @@ def _upgrade(conn: sqlite3.Connection) -> None:
                 "SELECT id, start_timecode, duration, frame_rate FROM clips").fetchall():
             conn.execute("UPDATE clips SET end_timecode = ? WHERE id = ?",
                          (end_timecode(start or "", duration, rate), row_id))
+    if version < 3:
+        conn.execute("""CREATE TABLE IF NOT EXISTS project_summary (
+            drive_set TEXT NOT NULL, shoot_date TEXT NOT NULL,
+            cards INTEGER, clips INTEGER, bytes INTEGER, failed INTEGER,
+            PRIMARY KEY (drive_set, shoot_date))""")
     if version < SCHEMA_VERSION:
         conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
+
+
+def _store_summary(conn: sqlite3.Connection, project_summary: List[Dict[str, Any]]) -> None:
+    conn.execute("DELETE FROM project_summary")  # a fresh snapshot each time
+    conn.executemany(
+        "INSERT INTO project_summary (drive_set, shoot_date, cards, clips, bytes, failed) VALUES (?,?,?,?,?,?)",
+        [(r["drive_set"], r["shoot_date"], r["cards"], r["clips"], r["bytes"], r["failed"]) for r in project_summary],
+    )
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('project_summary_updated', ?)",
+                 (datetime.now().isoformat(timespec="seconds"),))
 
 
 def _init_schema(conn: sqlite3.Connection, volume: str) -> None:
@@ -178,8 +127,13 @@ def _init_schema(conn: sqlite3.Connection, volume: str) -> None:
 
 # --- public API -------------------------------------------------------------
 
-def add_record(drive: Path, record: Dict[str, Any], lock_timeout: float = LOCK_TIMEOUT) -> bool:
-    """Add one card record to this drive's log. Returns False if it was already there."""
+def add_record(drive: Path, record: Dict[str, Any], lock_timeout: float = LOCK_TIMEOUT,
+               project_summary: Optional[List[Dict[str, Any]]] = None) -> bool:
+    """Add one card record to this drive's log. Returns False if it was already there.
+
+    project_summary (from the project history) replaces the drive's copy of the
+    all-drives summary, so this drive carries the totals of earlier drive sets.
+    """
     drive = require_mounted(drive)
     target = master_log_path(drive)
     with _locked(drive, lock_timeout):
@@ -189,13 +143,16 @@ def add_record(drive: Path, record: Dict[str, Any], lock_timeout: float = LOCK_T
 
         def build(conn: sqlite3.Connection) -> bool:
             if exists:
-                _copy_existing(target, conn)
+                copy_into(target, conn)
                 _upgrade(conn)
             else:
                 _init_schema(conn, drive.name)
-            return _insert(conn, record, drive.name)
+            added = _insert(conn, record, drive.name)
+            if project_summary is not None:
+                _store_summary(conn, project_summary)
+            return added
 
-        return _replace_log(drive, build)
+        return replace_db(target, build)
 
 
 def rebuild(drive: Path, lock_timeout: float = LOCK_TIMEOUT) -> Tuple[int, Optional[Path]]:
@@ -208,23 +165,37 @@ def rebuild(drive: Path, lock_timeout: float = LOCK_TIMEOUT) -> Tuple[int, Optio
     """
     drive = require_mounted(drive)
     target = master_log_path(drive)
-    records = sorted(_find_records(drive), key=lambda r: r.get("offload_started", ""))
+    records = sorted(find_records(drive), key=lambda r: r.get("offload_started", ""))
     with _locked(drive, lock_timeout):
-        set_aside = None
-        if target.exists() and not is_healthy(target):
-            set_aside = target.with_name(f"{target.name}.damaged-{datetime.now():%Y%m%d-%H%M%S}")
-            os.rename(target, set_aside)
+        set_aside = set_aside_if_damaged(target)
         exists = target.exists()
 
         def build(conn: sqlite3.Connection) -> int:
             if exists:
-                _copy_existing(target, conn)
+                copy_into(target, conn)
                 _upgrade(conn)
             else:
                 _init_schema(conn, drive.name)
             return sum(_insert(conn, r, drive.name) for r in records)
 
-        return _replace_log(drive, build), set_aside
+        return replace_db(target, build), set_aside
+
+
+def set_project_summary(drive: Path, project_summary: List[Dict[str, Any]],
+                        lock_timeout: float = LOCK_TIMEOUT) -> None:
+    """Refresh the drive's copy of the all-drives summary."""
+    drive = require_mounted(drive)
+    target = master_log_path(drive)
+    with _locked(drive, lock_timeout):
+        if not target.exists() or not is_healthy(target):
+            raise LogError(f"No healthy master log on {drive}")
+
+        def build(conn: sqlite3.Connection) -> None:
+            copy_into(target, conn)
+            _upgrade(conn)
+            _store_summary(conn, project_summary)
+
+        replace_db(target, build)
 
 
 def connect(drive: Path) -> sqlite3.Connection:
@@ -232,12 +203,13 @@ def connect(drive: Path) -> sqlite3.Connection:
     path = master_log_path(drive)
     if not path.exists():
         raise LogError(f"No master log on {drive}")
-    conn = _connect_readonly(path)
+    conn = connect_readonly(path)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def _find_records(drive: Path) -> List[Dict[str, Any]]:
+def find_records(drive: Path) -> List[Dict[str, Any]]:
+    """Every card record on a drive, including earlier failed attempts in _INCOMPLETE."""
     paths = list((drive / REPORTS_DIRNAME).glob("*/*_card.json")) + list((drive / INCOMPLETE_DIRNAME).glob("*_card.json"))
     records = []
     for path in paths:

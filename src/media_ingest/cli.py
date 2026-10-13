@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from . import __version__
 from .errors import IngestError
-from .interactive import EXIT_ERROR, Prompter, run_ingest, run_log, run_report
+from .interactive import EXIT_ERROR, Prompter, run_history, run_ingest, run_log, run_report
 
 _STAGE = {"verify": 7, "daylog": 6}
 
@@ -49,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
                             ("rebuild", "add missing card records to the SQLite log, then export")):
         lp = log_sub.add_parser(name, help=help_text)
         lp.add_argument("--dest", action="append", help="destination volume name or path (default: from project.json)")
+    p = sub.add_parser("history", help="project history across all drive sets (kept beside project.json)")
+    hist_sub = p.add_subparsers(dest="history_command", metavar="<history command>", required=True)
+    hist_sub.add_parser("show", help="print project totals per drive set")
+    hp = hist_sub.add_parser("rebuild", help="add card records from connected drives to the project history")
+    hp.add_argument("--dest", action="append", help="destination volume name or path (default: from project.json)")
     return parser
 
 
@@ -58,7 +63,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.command:
         parser.print_help()
         return 2
-    runners = {"ingest": run_ingest, "report": run_report, "log": run_log}
+    runners = {"ingest": run_ingest, "report": run_report, "log": run_log, "history": run_history}
     if args.command in runners:
         try:
             return runners[args.command](args, Prompter())

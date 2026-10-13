@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from . import __version__, diskio, masterlog, xlsx_export
+from . import __version__, diskio, history, masterlog, xlsx_export
 from .copier import CopyResult, ProgressFn, copy_card
 from .errors import CopyError, DestinationExistsError, IngestError, SourceError
 from .incomplete import COPYING, FAILED, MARKER_NAME, Marker, remove_marker, write_marker
@@ -153,6 +153,7 @@ def run_offload(
     exif: Optional[Dict[str, Dict[str, Any]]] = None,
     tools: Optional[ToolStatus] = None,
     job: Optional[JobInfo] = None,
+    project_history: Optional[Path] = None,
 ) -> OffloadResult:
     """Offload one card. Returns a result whose .passed says PASS or FAIL.
 
@@ -202,7 +203,7 @@ def run_offload(
         result.copy = copy_card(listing, result.card_dirs, progress=progress, chunk_size=chunk_size)
     except (CopyError, SourceError) as e:
         result.errors.append(str(e))
-        _finish(result, job, copy_all, t0)
+        _finish(result, job, copy_all, t0, project_history)
         _mark_failed(result, marker, str(e))
         return result
 
@@ -218,7 +219,7 @@ def run_offload(
     if verified is not None:
         result.clips = extract_card(verified, listing.files, result.copy.hashes, exif=exif, tools=tools or find_tools())
 
-    _finish(result, job, copy_all, t0)
+    _finish(result, job, copy_all, t0, project_history)
     if result.passed:
         for card_dir in result.card_dirs:
             remove_marker(card_dir)
@@ -227,7 +228,8 @@ def run_offload(
     return result
 
 
-def _finish(result: OffloadResult, job: Optional[JobInfo], copy_all: bool, t0: float) -> None:
+def _finish(result: OffloadResult, job: Optional[JobInfo], copy_all: bool, t0: float,
+            project_history: Optional[Path] = None) -> None:
     """Write the card record and job reports on every destination."""
     result.finished_at = datetime.now()
     result.elapsed = time.monotonic() - t0
@@ -250,9 +252,19 @@ def _finish(result: OffloadResult, job: Optional[JobInfo], copy_all: bool, t0: f
             result.warnings.append(f"Could not write report {path}: {e}")
     # A log problem is a warning, not a FAIL: the media verified, and the card
     # record on the drive holds everything needed to rebuild the log.
+    summary = None
+    if project_history is not None:
+        try:
+            history.add_record(project_history, record)
+            summary = history.summary(project_history)
+        except (OSError, IngestError, sqlite3.Error) as e:
+            result.warnings.append(
+                f"Project history {project_history} was NOT updated: {e}. "
+                "Run `mit history rebuild` with the drives connected."
+            )
     for d in result.drives:
         try:
-            masterlog.add_record(d, record)
+            masterlog.add_record(d, record, project_summary=summary)
         except (OSError, IngestError, sqlite3.Error) as e:
             result.warnings.append(
                 f"Master log on {d} was NOT updated: {e}. Run `mit log rebuild` once the problem is fixed."

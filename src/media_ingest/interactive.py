@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, List, Optional, TextIO
 
-from . import masterlog
+from . import history, masterlog
 from .config import MEDIA_TYPES, load_config
 from .errors import ConfigError, IngestError, NamingError
 from .incomplete import find_incomplete_all, marker_differences, quarantine
@@ -116,6 +116,7 @@ def parse_media_type(text: str) -> Optional[str]:
 
 def run_ingest(args, p: Prompter) -> int:
     cfg = load_config(args.config)
+    history_file = history.history_path(args.config)
 
     source = Path(args.source or p.ask("Source card path (e.g. /Volumes/A001)")).expanduser()
     if args.dest:
@@ -169,9 +170,15 @@ def run_ingest(args, p: Prompter) -> int:
     if card is None:
         if incomplete:
             p.say(f"Incomplete card(s) stay flagged: {', '.join(incomplete)}")
-        card = CardName(cfg.show_code, shoot_date, camera.id, propose_reel(drives, cfg.show_code, shoot_date, camera.id))
+        # Reels used on other drive sets (project history) are never reused.
+        elsewhere = history.used_reels(history_file, cfg.show_code, shoot_date, camera.id)
+        card = CardName(cfg.show_code, shoot_date, camera.id,
+                        propose_reel(drives, cfg.show_code, shoot_date, camera.id, also_used=elsewhere))
+        if elsewhere:
+            p.say(f"  Camera {camera.id} also has reel(s) {', '.join(f'{r:02d}' for r in sorted(elsewhere))} "
+                  f"on {shoot_date:%m/%d/%Y} in the project history (other drives included)")
         if not p.confirm(f"Card name {card}", default=True):
-            card = _ask_reel(p, drives, cfg.show_code, shoot_date, camera.id)
+            card = _ask_reel(p, drives, cfg.show_code, shoot_date, camera.id, elsewhere)
 
     # Media type: proposed, the operator decides.
     proposal = propose_media_type(scan, camera)
@@ -226,6 +233,7 @@ def run_ingest(args, p: Prompter) -> int:
                 camera_model=camera.model, camera_description=camera.description, camera_shooter=camera.shooter,
                 operator=operator, notes=notes,
             ),
+            project_history=history_file,
         )
     except KeyboardInterrupt:
         progress.finish()
@@ -285,6 +293,9 @@ def run_log(args, p: Prompter) -> int:
                     p.warn_loud([f"The master log on {drive} was damaged.",
                                  f"It was moved to {set_aside} (not deleted) and rebuilt from the card records."])
                 p.say(f"  {drive}: {added} card record(s) added to the master log")
+                history_file = history.history_path(args.config)
+                if history_file.exists():
+                    masterlog.set_project_summary(drive, history.summary(history_file))
             path = export_xlsx(drive)
         except (IngestError, OSError, sqlite3.Error) as e:
             p.say(f"  {drive}: {e}")
@@ -292,6 +303,49 @@ def run_log(args, p: Prompter) -> int:
         p.say(f"  {path}")
         done += 1
     return EXIT_PASS if done else EXIT_ERROR
+
+
+def run_history(args, p: Prompter) -> int:
+    """`mit history rebuild`: add card records from the connected drives to the project history,
+    then refresh each drive's copy of the all-drives summary.
+    `mit history show`: print the project totals per drive set."""
+    path = history.history_path(args.config)
+    if args.history_command == "rebuild":
+        names = args.dest or load_config(args.config).default_destinations
+        drives = [resolve_destination(d) for d in names]
+        mounted = [d for d in drives if d.is_dir()]
+        for d in drives:
+            if d not in mounted:
+                p.say(f"  {d}: not mounted, skipped")
+        if not mounted:
+            return EXIT_ERROR
+        added, set_aside = history.rebuild_from_drives(path, mounted)
+        if set_aside:
+            p.warn_loud([f"The project history was damaged. It was moved to {set_aside} (not deleted) and rebuilt."])
+        p.say(f"  {added} card record(s) added to {path}")
+        summary = history.summary(path)
+        for d in mounted:
+            try:
+                masterlog.set_project_summary(d, summary)
+                export_xlsx(d)
+                p.say(f"  {d}: all-drives summary updated")
+            except (IngestError, OSError, sqlite3.Error) as e:
+                p.say(f"  {d}: {e}")
+    rows = history.summary(path)
+    if not rows:
+        p.say(f"No project history at {path}")
+        return EXIT_PASS if args.history_command == "rebuild" else EXIT_ERROR
+    p.say(f"Project history: {path}")
+    totals: dict = {}
+    for r in rows:
+        t = totals.setdefault(r["drive_set"], [0, 0, 0, set()])
+        t[0] += r["cards"]; t[1] += r["bytes"] or 0; t[2] += r["failed"] or 0; t[3].add(r["shoot_date"])
+    for name, (cards, size, failed, days) in totals.items():
+        p.say(f"  {name}: {cards} card(s), {format_bytes(size)}, {len(days)} day(s)"
+              + (f", {failed} failed" if failed else ""))
+    p.say(f"  Project total: {sum(t[0] for t in totals.values())} card(s), "
+          f"{format_bytes(sum(t[1] for t in totals.values()))}")
+    return EXIT_PASS
 
 
 def _choose_operator(p: Prompter, operators: List[str], given: Optional[str]) -> str:
@@ -345,8 +399,8 @@ def _confirm_shoot_date(p: Prompter, given: Optional[str], times: List) -> date:
             p.say(f"  {e}")
 
 
-def _ask_reel(p: Prompter, drives, show: str, shoot_date: date, cam: str) -> CardName:
-    used = set().union(*(existing_reels(d, show, shoot_date, cam) for d in drives))
+def _ask_reel(p: Prompter, drives, show: str, shoot_date: date, cam: str, elsewhere=frozenset()) -> CardName:
+    used = set(elsewhere).union(*(existing_reels(d, show, shoot_date, cam) for d in drives))
     while True:
         text = p.ask(f"Reel number (01-{MAX_REEL:02d})")
         try:
@@ -355,7 +409,7 @@ def _ask_reel(p: Prompter, drives, show: str, shoot_date: date, cam: str) -> Car
             p.say("  Enter a number from 01 to 99")
             continue
         if card.reel in used:
-            p.say(f"  {card} already exists on a destination")
+            p.say(f"  {card} is already used (on these drives or another drive set)")
             continue
         return card
 

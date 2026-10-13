@@ -210,6 +210,6 @@ def test_log_from_before_end_tc_is_upgraded(sample_card, drives, tmp_path):
         conn.commit()
     other = write_card(tmp_path / "B001", {"CLIP/C0001.MP4": b"b" * 1000})
     assert offload_card(other, drives, "ABC261012B01").passed
-    assert rows(drives[0], "SELECT value FROM meta WHERE key = 'schema_version'")[0]["value"] == "2"
+    assert rows(drives[0], "SELECT value FROM meta WHERE key = 'schema_version'")[0]["value"] == str(masterlog.SCHEMA_VERSION)
     old = rows(drives[0], "SELECT end_timecode FROM clips WHERE card = 'ABC261012A01'")
     assert {r["end_timecode"] for r in old} == {"01:00:02:00"}

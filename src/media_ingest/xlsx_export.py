@@ -89,6 +89,18 @@ DAY_COLUMNS: List[Column] = [
     ("Clips", INT, lambda r: r["clips"]),
     ("GB that day", GB, lambda r: r["bytes"]),
     ("Running total GB on drive", GB, lambda r: r["running"]),
+    ("Project total GB (all drives)", GB, lambda r: r["project_running"]),
+    ("Failed cards", INT, lambda r: r["failed"]),
+]
+
+ALL_DRIVES_COLUMNS: List[Column] = [
+    ("Drive set", TEXT, lambda r: r["drive_set"]),
+    ("This drive", TEXT, lambda r: "yes" if r["this_drive"] else ""),
+    ("Shoot date", TEXT, lambda r: r["shoot_date"]),
+    ("Cards", INT, lambda r: r["cards"]),
+    ("Clips", INT, lambda r: r["clips"]),
+    ("GB", GB, lambda r: r["bytes"]),
+    ("Project running total GB", GB, lambda r: r["running"]),
     ("Failed cards", INT, lambda r: r["failed"]),
 ]
 
@@ -105,7 +117,10 @@ def export_xlsx(drive: Path, now: Optional[datetime] = None) -> Path:
             """SELECT c.* FROM clips c JOIN offloads o ON o.id = c.offload_id
                ORDER BY c.shoot_date, c.card, o.offload_started, o.id, c.rel_path"""
         ).fetchall()
-        days = _days(conn)
+        project = _project_rows(conn, drive.name)
+        days = _days(conn, project)
+        summary_updated = conn.execute(
+            "SELECT value FROM meta WHERE key = 'project_summary_updated'").fetchone()
         show = conn.execute("SELECT show_code, project_name FROM offloads ORDER BY offload_started DESC LIMIT 1").fetchone()
 
     show_text = " ".join(p for p in (show["show_code"], show["project_name"]) if p) if show else ""
@@ -118,6 +133,13 @@ def export_xlsx(drive: Path, now: Optional[datetime] = None) -> Path:
            failed=lambda r: r["id"] in failed_offloads, grey=lambda r: r["id"] in superseded)
     _sheet(wb.create_sheet(), "Days", title, DAY_COLUMNS, days,
            failed=lambda r: r["failed"] > 0, grey=lambda r: False)
+    all_drives = wb.create_sheet()
+    _sheet(all_drives, "All drives", title, ALL_DRIVES_COLUMNS, project,
+           failed=lambda r: (r["failed"] or 0) > 0, grey=lambda r: False)
+    note = (f"Every drive set in the project, from the project history (as of {summary_updated[0].replace('T', ' ')})."
+            if summary_updated else "No project history on this drive yet: offload with project.json's folder "
+            "available, or run `mit history rebuild`.")
+    all_drives.cell(row=all_drives.max_row + 2, column=1, value=note).font = Font(italic=True, color="5F6670")
 
     target = xlsx_log_path(drive)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{target.stem}.", suffix=".xlsx.tmp", dir=target.parent)
@@ -136,8 +158,22 @@ def export_xlsx(drive: Path, now: Optional[datetime] = None) -> Path:
     return target
 
 
-def _days(conn) -> List[dict]:
-    """Per shoot date, current (non-superseded) offloads only, with a running total."""
+def _project_rows(conn, volume: str) -> List[dict]:
+    """The all-drives summary copied from the project history, with a project running total."""
+    rows = conn.execute("SELECT * FROM project_summary ORDER BY shoot_date, drive_set").fetchall()
+    running = 0
+    out = []
+    for r in rows:
+        running += r["bytes"] or 0
+        out.append({**dict(r), "running": running, "this_drive": volume in r["drive_set"].split(" & ")})
+    return out
+
+
+def _days(conn, project: List[dict]) -> List[dict]:
+    """Per shoot date, current (non-superseded) offloads only, with a running total.
+
+    The project total is the running total across all drive sets up to that date
+    (blank when the drive has no project summary)."""
     rows = conn.execute(
         """SELECT shoot_date, COUNT(*) AS cards, SUM(clip_count) AS clips, SUM(total_bytes) AS bytes,
                   SUM(CASE WHEN drive_result = 'PASS' THEN 0 ELSE 1 END) AS failed
@@ -147,7 +183,8 @@ def _days(conn) -> List[dict]:
     days = []
     for r in rows:
         running += r["bytes"] or 0
-        days.append({**dict(r), "running": running})
+        upto = [p["bytes"] or 0 for p in project if p["shoot_date"] <= r["shoot_date"]]
+        days.append({**dict(r), "running": running, "project_running": sum(upto) if project else None})
     return days
 
 
@@ -169,8 +206,10 @@ def _sheet(ws, name: str, title: str, columns: Sequence[Column], rows, failed, g
                 cell.value = None if value in (None, "") else str(value)  # blank stays truly empty
                 cell.number_format = "@"
                 shown = cell.value or ""
+            elif kind == GB and value is None:
+                shown = ""
             elif kind == GB:
-                cell.value = round((value or 0) / 1e9, 6)
+                cell.value = round(value / 1e9, 6)
                 cell.number_format = "0.00"
                 shown = f"{cell.value:.2f}"
             elif kind == DURATION:

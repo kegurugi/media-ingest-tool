@@ -35,8 +35,13 @@ def existing_reels(drive: DriveLike, show: str, shoot_date: date, cam: str) -> S
     return reels
 
 
-def propose_reel(drives: Iterable[DriveLike], show: str, shoot_date: date, cam: str) -> int:
+def propose_reel(
+    drives: Iterable[DriveLike], show: str, shoot_date: date, cam: str, also_used: Iterable[int] = ()
+) -> int:
     """Next reel number (highest existing + 1). Destinations must agree.
+
+    also_used adds reels used on other drive sets (from the project history), so
+    a reel number is never reused when a day continues on new drives.
 
     Every destination is meant to be identical, so if they hold different
     reels for this camera and day, something went wrong earlier (e.g. an
@@ -55,7 +60,7 @@ def propose_reel(drives: Iterable[DriveLike], show: str, shoot_date: date, cam: 
             f"Destinations disagree about existing reels for camera {cam.upper()} on {shoot_date}:\n{details}"
         )
 
-    next_reel = max(reel_sets[0], default=0) + 1
+    next_reel = max(reel_sets[0] | set(also_used), default=0) + 1
     if next_reel > MAX_REEL:
         raise NamingError(f"Camera {cam.upper()} already has reel {MAX_REEL:02d} on {shoot_date}; no reels left")
     return next_reel

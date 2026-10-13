@@ -7,7 +7,8 @@ media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 **Status:** build stages 1–5 of 8 are done: config, naming, verified
 multi-destination copying, clip metadata, the per-card job report, and the
 master log with its spreadsheet export. `mit ingest`, `mit report` and
-`mit log` work. The daily card log and `mit verify` come in later stages. Sony and
+`mit log` and `mit history` work. The daily card log and `mit verify` come in
+later stages. Sony and
 Canon XML sidecars aren't read yet; that waits for real sample cards.
 
 ## Installation
@@ -147,6 +148,33 @@ drive (from `_REPORTS` and `_INCOMPLETE`) that the log is missing, then exports.
 It never removes rows from a healthy log. A damaged log is renamed aside, not
 deleted, and rebuilt from the records. Both take `--dest`; otherwise they use
 `default_destinations` from `project.json`.
+
+### Project history (all drive sets)
+
+Each drive's log only knows its own contents. So that totals carry on when a
+season moves to new drives (e.g. DRV01A/B to DRV02A/B), every offload is also
+recorded in `project_history.sqlite`, kept on the Mac **next to
+`project.json`**. It uses the same safe writes as the drive logs.
+
+- Each drive's master log gets a copy of the all-drives summary after every
+  offload. Its spreadsheet shows it on an **All drives** sheet, and the Days
+  sheet gains a **Project total GB (all drives)** column. A later drive
+  therefore carries the earlier drives' totals even when they're on a shelf.
+- **Reel numbers are never reused across drive sets.** If camera A shot A01 to
+  A03 on DRV01 and the day continues on DRV02, the next card is proposed as A04.
+
+```bash
+.venv/bin/mit history show
+```
+
+```bash
+.venv/bin/mit history rebuild --dest DRV01A --dest DRV02A
+```
+
+`show` prints the totals per drive set. `rebuild` adds the card records on the
+connected drives to the history; this is the recovery path if the Mac's copy is
+lost, for example on a new laptop. It then refreshes those drives' all-drives
+summaries. A damaged history is renamed aside, not deleted.
 
 ### Card record
 
