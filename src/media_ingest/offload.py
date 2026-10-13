@@ -6,7 +6,8 @@ Steps:
   3. Create card folders and write incomplete markers.
   4. Copy to all destinations, hashing the source.
   5. Re-read and verify every destination file.
-  6. Extract clip metadata from a verified copy.
+  6. Extract clip metadata from a verified copy; write the ASC MHL manifest
+     into each card folder (verified cards only).
   7. Write the card record (hashes, results, metadata) and the job report on
      every destination, plus a report copy inside each card folder.
   8. Add the card to each drive's master log and regenerate its spreadsheet.
@@ -27,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from . import __version__, daily_log, diskio, history, masterlog, xlsx_export
+from . import __version__, daily_log, diskio, history, masterlog, mhl, xlsx_export
 from .daydetails import PROJECT_DAYS_DIRNAME
 from .copier import CopyResult, ProgressFn, copy_card
 from .errors import CopyError, DestinationExistsError, IngestError, SourceError
@@ -85,6 +86,7 @@ class OffloadResult:
     reports: List[Path] = field(default_factory=list)
     spreadsheets: List[Path] = field(default_factory=list)
     daily_logs: List[Path] = field(default_factory=list)
+    mhl_paths: List[Path] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)  # any error means FAIL
     warnings: List[str] = field(default_factory=list)  # problems that don't affect verification
     elapsed: float = 0.0  # whole offload: checks, copy, verify, metadata
@@ -283,6 +285,15 @@ def run_offload(
     if verified is not None:
         result.clips = extract_card(verified, listing.files, result.copy.hashes, exif=exif, tools=tools or find_tools())
 
+    # ASC MHL manifest in each card folder, only for a card that verified everywhere.
+    if all(v.ok for v in result.verifications):
+        for card_dir in result.card_dirs:
+            try:
+                result.mhl_paths.append(mhl.write_mhl(card_dir, str(card), result.copy.hashes, listing.dirs,
+                                                      operator=job.operator if job else ""))
+            except (OSError, IngestError) as e:
+                result.warnings.append(f"ASC MHL manifest NOT written in {card_dir}: {e}")
+
     _finish(result, job, copy_all, t0, project_history)
     if result.passed:
         for card_dir in result.card_dirs:
@@ -388,6 +399,7 @@ def _card_record(result: OffloadResult, copy_all: bool, job: Optional[JobInfo] =
                 "card_path": str(card_dir.relative_to(drive)),
                 "result": "PASS" if v is not None and v.ok and not result.errors else "FAIL",
                 "physical_disk": (result.disk_ids[drive].description or "unknown") if drive in result.disk_ids else "",
+                "ascmhl": next((str(p.relative_to(card_dir)) for p in result.mhl_paths if card_dir in p.parents), ""),
                 "missing_dirs": v.missing_dirs if v else [],
                 "extra_files": v.extra_files if v else [],
                 "ignored_macos_files": len(v.ignored_files) if v else 0,

@@ -623,6 +623,8 @@ def _print_summary(p: Prompter, r: OffloadResult) -> None:
     ]
     lines += [f"Report:   {path}" for path in r.reports if "_REPORTS" in path.parts]
     lines += [f"Day log:  {path}" for path in r.daily_logs]
+    if r.mhl_paths:
+        lines.append(f"ASC MHL:  {r.mhl_paths[0].parent.name}/{r.mhl_paths[0].name} (in each card folder)")
     if r.warnings:
         p.warn_loud(["WARNING", *r.warnings])
     if r.passed:

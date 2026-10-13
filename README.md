@@ -7,7 +7,7 @@ media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 **Status:** build stages 1–7 of 8 are done: config, naming, verified
 multi-destination copying, clip metadata, the per-card job report, the master
 log with its spreadsheet export and project history, the daily card log, and
-`mit verify`. Phase 2 (ASC MHL manifests, proxies) is next. Sony and
+`mit verify`. Phase 2: ASC MHL manifests are done; proxies are next. Sony and
 Canon XML sidecars aren't read yet; that waits for real sample cards.
 
 ## Installation
@@ -248,6 +248,34 @@ spot-checks or checking a shuttle drive on arrival. It only reads the media.
 
 Verify reads every byte: a full 8 TB drive at about 1 GB/s takes over two
 hours, so `--date` is useful for spot-checks.
+
+### ASC MHL manifest
+
+Every card that passes gets a standard ASC MHL v2 manifest inside its card
+folder on each destination, where ShotPut Pro, Silverstack, Hedge and the
+ASC's `ascmhl` tool expect it:
+
+```
+ABC261012A01/
+  ascmhl/0001_ABC261012A01_2026-10-12_213512Z.mhl
+  ascmhl/ascmhl_chain.xml
+```
+
+It lists every file's xxHash64, size and date, plus folder and root hashes
+(computed exactly as the ASC reference implementation does). It's built from
+the hashes already verified during the offload, so the media isn't read
+again. The job report copy, the incomplete marker and macOS clutter are
+listed as ignore patterns. Failed cards get no manifest. Anyone with the ASC
+tool can check a card independently:
+
+```bash
+ascmhl create /Volumes/DRV01B/10122026/VIDEO/ABC261012A01 -h xxh64
+```
+
+(`ascmhl create` on a folder that already has a history re-hashes everything
+against it and fails on any mismatch; it adds a second manifest recording the
+check.) The tests use the reference tool (`pip install ascmhl`, installed with
+`.[dev]`) to confirm the manifests are read and verified correctly.
 
 ### Card record
 

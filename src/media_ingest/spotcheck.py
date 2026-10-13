@@ -25,6 +25,7 @@ from .incomplete import COPYING, MARKER_NAME, read_marker
 from .layout import REPORTS_DIRNAME, card_record_path, master_log_path
 from .masterlog import connect
 from .naming import CardName, parse_date_folder
+from .mhl import MHL_DIRNAME
 from .report import report_filename
 from .sources import is_macos_clutter
 from .sqlitesafe import is_healthy
@@ -250,7 +251,10 @@ def check_card(folder: Path, drive: Optional[Path] = None, card: Optional[CardNa
     check.failures = result.failures
     check.missing_dirs = result.missing_dirs
     for rel in result.extra_files:
-        if not any(is_macos_clutter(part) for part in PurePosixPath(rel).parts):
+        parts = PurePosixPath(rel).parts
+        if parts[0] == MHL_DIRNAME:
+            continue  # the card's ASC MHL manifest
+        if not any(is_macos_clutter(part) for part in parts):
             check.warnings.append(f"unexpected file {rel}")
     check.elapsed = time.monotonic() - t0
     return check

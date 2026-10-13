@@ -140,10 +140,18 @@ def _header_fields(record: Dict[str, Any], volumes: List[str]) -> str:
         ("Source volume", record.get("source_volume", "")),
         ("Destinations", " & ".join(volumes)),
         ("Separate drives", record.get("separate_drives", "")),
+        ("ASC MHL", _mhl_text(record)),
         ("Result", record.get("result", "")),
     ]
     rows = "".join(f"<div><dt>{_e(k)}</dt><dd>{_e(v)}</dd></div>" for k, v in fields)
     return f'<section><dl class="fields">{rows}</dl></section>'
+
+
+def _mhl_text(record: Dict[str, Any]) -> str:
+    paths = [d.get("ascmhl") for d in record.get("destinations", []) if d.get("ascmhl")]
+    if not paths:
+        return "not written" if "destinations" in record and record.get("result") == "PASS" else ""
+    return f"{paths[0]} (in the card folder on {len(paths)} drive{'s' if len(paths) != 1 else ''})"
 
 
 def _shoot_date(iso: str) -> str:
