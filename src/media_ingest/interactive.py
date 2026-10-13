@@ -1,0 +1,304 @@
+"""Interactive `mit ingest`: gather choices, confirm with the operator, offload, summarise."""
+from __future__ import annotations
+
+import re
+import sys
+import time
+from datetime import date
+from pathlib import Path
+from typing import Callable, List, Optional, TextIO
+
+from .config import MEDIA_TYPES, load_config
+from .errors import NamingError
+from .incomplete import find_incomplete_all, marker_differences, quarantine
+from .layout import card_dir
+from .mediatype import choice_warnings, propose_media_type, scan_card
+from .naming import MAX_REEL, CardName
+from .offload import OffloadResult, preflight, run_offload
+from .reels import existing_reels, propose_reel
+from .sources import list_source, volume_name
+from .space import format_bytes, require_space
+
+EXIT_PASS = 0
+EXIT_FAIL = 1  # verification failed, or the operator cancelled
+EXIT_ERROR = 2
+EXIT_INTERRUPTED = 130
+
+
+class Prompter:
+    def __init__(self, input_fn: Optional[Callable[[str], str]] = None, out: Optional[TextIO] = None,
+                 err: Optional[TextIO] = None):
+        self.input_fn = input_fn or (lambda prompt: input(prompt))
+        self._out = out
+        self._err = err
+
+    @property
+    def out(self) -> TextIO:
+        return self._out or sys.stdout
+
+    @property
+    def err(self) -> TextIO:
+        return self._err or sys.stderr
+
+    def say(self, msg: str = "") -> None:
+        print(msg, file=self.out)
+
+    def warn_loud(self, lines: List[str]) -> None:
+        red, reset = ("\033[1;31m", "\033[0m") if self.err.isatty() else ("", "")
+        bar = "!" * 72
+        print(f"{red}{bar}", file=self.err)
+        for line in lines:
+            print(f"!!  {line}", file=self.err)
+        print(f"{bar}{reset}", file=self.err)
+
+    def ask(self, prompt: str, default: Optional[str] = None) -> str:
+        suffix = f" [{default}]" if default else ""
+        while True:
+            answer = self.input_fn(f"{prompt}{suffix}: ").strip()
+            if answer:
+                return answer
+            if default:
+                return default
+
+    def confirm(self, prompt: str, default: bool = False) -> bool:
+        hint = "Y/n" if default else "y/N"
+        while True:
+            answer = self.input_fn(f"{prompt} [{hint}]: ").strip().lower()
+            if not answer:
+                return default
+            if answer in ("y", "yes"):
+                return True
+            if answer in ("n", "no"):
+                return False
+
+
+def parse_shoot_date(text: str) -> date:
+    """Accept MMDDYYYY, MM/DD/YYYY or YYYY-MM-DD."""
+    text = text.strip()
+    for pattern, order in (
+        (r"^(\d{2})(\d{2})(\d{4})$", "mdy"),
+        (r"^(\d{1,2})/(\d{1,2})/(\d{4})$", "mdy"),
+        (r"^(\d{4})-(\d{2})-(\d{2})$", "ymd"),
+    ):
+        m = re.match(pattern, text)
+        if m:
+            a, b, c = (int(g) for g in m.groups())
+            try:
+                return date(c, a, b) if order == "mdy" else date(a, b, c)
+            except ValueError:
+                break
+    raise NamingError(f"{text!r} is not a valid date (use MMDDYYYY, e.g. 10122026)")
+
+
+def resolve_destination(name: str) -> Path:
+    """A bare volume name means /Volumes/<name>; anything with a slash is a path."""
+    name = name.strip()
+    return Path(name).expanduser() if "/" in name or name.startswith("~") else Path("/Volumes") / name
+
+
+def parse_media_type(text: str) -> Optional[str]:
+    text = text.strip().upper()
+    for mt in MEDIA_TYPES:
+        if text and mt.startswith(text):
+            return mt
+    return None
+
+
+def run_ingest(args, p: Prompter) -> int:
+    cfg = load_config(args.config)
+
+    source = Path(args.source or p.ask("Source card path (e.g. /Volumes/A001)")).expanduser()
+    if args.dest:
+        drives = [resolve_destination(d) for d in args.dest]
+    else:
+        default = ", ".join(cfg.default_destinations) or None
+        drives = [resolve_destination(d) for d in p.ask("Destinations, comma-separated", default).split(",") if d.strip()]
+    preflight(source, drives, args.allow_same_volume)
+
+    if args.camera:
+        camera = cfg.camera(args.camera)
+    else:
+        p.say("Cameras: " + ", ".join(f"{c.id} ({c.description or c.model})" for c in cfg.cameras.values()))
+        camera = cfg.camera(p.ask("Camera ID"))
+
+    p.say(f"\nScanning {source} ...")
+    scan = scan_card(source)
+    listing = list_source(source, copy_all=args.copy_all)
+    source_vol = volume_name(source)
+    p.say(f"  {len(listing.files):,} files, {format_bytes(listing.total_bytes)} ({scan.summary()})")
+    if listing.skipped:
+        p.say(f"  Skipping {len(listing.skipped)} macOS system item(s): {', '.join(listing.skipped[:5])}"
+              + (" ..." if len(listing.skipped) > 5 else ""))
+
+    # Shoot date: typed by the operator until metadata extraction (stage 3) can propose one.
+    while True:
+        try:
+            shoot_date = parse_shoot_date(args.date or p.ask("Shoot date (MMDDYYYY)"))
+            break
+        except NamingError as e:
+            if args.date:
+                raise
+            p.say(f"  {e}")
+
+    # Recopy of an incomplete or failed card keeps its reel number.
+    card: Optional[CardName] = None
+    recopy = []
+    incomplete = find_incomplete_all(drives, cfg.show_code, shoot_date, camera.id)
+    for name, items in incomplete.items():
+        m = items[0].marker
+        p.say(f"\n{name} ({items[0].media_type}) is INCOMPLETE: status {m.status}, started {m.started_at}, "
+              f"source {m.source_volume or 'unknown'}.")
+        if m.detail:
+            p.say(f"  {m.detail}")
+        diffs = marker_differences(m, listing, source_vol)
+        if diffs:
+            p.warn_loud([f"The card in the reader may not be the card that was copied to {name}:", *diffs])
+        if p.confirm(f"Is this the same card? Recopy it as {name}"):
+            card, recopy = items[0].card, items
+            break
+    if card is None:
+        if incomplete:
+            p.say(f"Incomplete card(s) stay flagged: {', '.join(incomplete)}")
+        card = CardName(cfg.show_code, shoot_date, camera.id, propose_reel(drives, cfg.show_code, shoot_date, camera.id))
+        if not p.confirm(f"Card name {card}", default=True):
+            card = _ask_reel(p, drives, cfg.show_code, shoot_date, camera.id)
+
+    # Media type: proposed, the operator decides.
+    proposal = propose_media_type(scan, camera)
+    default_mt = recopy[0].media_type if recopy else proposal.media_type
+    p.say(f"\nMedia type: {proposal.media_type or 'undecided'} - {proposal.reason}")
+    for note in proposal.notes:
+        p.say(f"  note: {note}")
+    if proposal.warnings:
+        p.warn_loud(proposal.warnings)
+    while True:
+        media_type = args.media_type and parse_media_type(args.media_type) or parse_media_type(
+            p.ask("Media type (VIDEO/AUDIO/STILLS)", default_mt)
+        )
+        if media_type is None:
+            continue
+        warnings = choice_warnings(scan, media_type)
+        if not warnings:
+            break
+        p.warn_loud(warnings)
+        if p.confirm(f"File it under {media_type} anyway?"):
+            break
+        args.media_type = None
+
+    p.say("\nReady to offload:")
+    p.say(f"  Card:    {card}  (camera {camera.id}: {camera.model}"
+          + (f", {camera.description}" if camera.description else "") + ")")
+    p.say(f"  Media:   {media_type}")
+    p.say(f"  Source:  {source}  ({source_vol}): {len(listing.files):,} files, {format_bytes(listing.total_bytes)}")
+    for d in drives:
+        p.say(f"  Target:  {card_dir(d, card, media_type)}")
+    if recopy:
+        p.say(f"  Recopy:  the incomplete {card} folders will be moved to _INCOMPLETE (not deleted)")
+    if not p.confirm("Start offload?"):
+        p.say("Cancelled. Nothing was copied.")
+        return EXIT_FAIL
+
+    require_space(listing, drives)  # before moving anything aside
+    for item in recopy:
+        drive = next(d for d in drives if _is_within(item.path, d))
+        moved = quarantine(item, drive)
+        p.say(f"  Moved incomplete folder to {moved}")
+
+    progress = _ProgressPrinter(p.err)
+    try:
+        result = run_offload(
+            source, drives, card, media_type, listing=listing, copy_all=args.copy_all,
+            progress=progress, allow_same_volume=args.allow_same_volume,
+        )
+    except KeyboardInterrupt:
+        progress.finish()
+        p.warn_loud([
+            "INTERRUPTED. The copy is incomplete.",
+            f"Run `mit ingest` again with the same card to recopy it as {card}.",
+        ])
+        return EXIT_INTERRUPTED
+    progress.finish()
+    _print_summary(p, result)
+    return EXIT_PASS if result.passed else EXIT_FAIL
+
+
+def _ask_reel(p: Prompter, drives, show: str, shoot_date: date, cam: str) -> CardName:
+    used = set().union(*(existing_reels(d, show, shoot_date, cam) for d in drives))
+    while True:
+        text = p.ask(f"Reel number (01-{MAX_REEL:02d})")
+        try:
+            card = CardName(show, shoot_date, cam, int(text))
+        except (ValueError, NamingError):
+            p.say("  Enter a number from 01 to 99")
+            continue
+        if card.reel in used:
+            p.say(f"  {card} already exists on a destination")
+            continue
+        return card
+
+
+def _print_summary(p: Prompter, r: OffloadResult) -> None:
+    lines = [
+        f"{'PASS' if r.passed else 'FAIL'}  {r.card}  ({r.media_type})",
+        f"Files:    {r.file_count:,}",
+        f"Size:     {format_bytes(r.total_bytes)}",
+        f"Elapsed:  {_hms(r.elapsed)}" + (f"  (copy {format_bytes(r.copy_speed)}/s)" if r.copy else ""),
+    ]
+    lines += [f"Hashes:   {path}" for path in r.hash_records]
+    if r.passed:
+        p.say("\n" + "=" * 72)
+        for line in lines:
+            p.say(f"  {line}")
+        p.say("=" * 72)
+        return
+    detail = [*lines, ""]
+    detail += [f"ERROR: {e}" for e in r.errors]
+    for v in r.verifications:
+        for c in v.failures[:20]:
+            detail.append(f"{v.card_dir}: {c.status} {c.rel_path} {c.detail}".rstrip())
+        if len(v.failures) > 20:
+            detail.append(f"{v.card_dir}: ... and {len(v.failures) - 20} more")
+        detail += [f"{v.card_dir}: missing folder {d}" for d in v.missing_dirs]
+        detail += [f"{v.card_dir}: unexpected file {f}" for f in v.extra_files]
+    detail += ["", f"Card {r.card} is marked FAILED. Run `mit ingest` again to recopy it as {r.card}."]
+    p.warn_loud(["CARD FAILED VERIFICATION", *detail])
+
+
+class _ProgressPrinter:
+    def __init__(self, stream: TextIO, interval: float = 0.25):
+        self.stream = stream
+        self.interval = interval
+        self.start = time.monotonic()
+        self.last = 0.0
+        self.active = False
+
+    def __call__(self, done: int, total: int, rel_path: str) -> None:
+        now = time.monotonic()
+        if now - self.last < self.interval and done < total:
+            return
+        self.last = now
+        pct = 100 * done / total if total else 100
+        speed = done / max(now - self.start, 1e-6)
+        line = f"  {format_bytes(done)} / {format_bytes(total)}  {pct:5.1f}%  {format_bytes(speed)}/s  {rel_path}"
+        self.stream.write("\r" + line[:110].ljust(110))
+        self.stream.flush()
+        self.active = True
+
+    def finish(self) -> None:
+        if self.active:
+            self.stream.write("\n")
+            self.stream.flush()
+            self.active = False
+
+
+def _hms(seconds: float) -> str:
+    s = int(round(seconds))
+    return f"{s // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d}"
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False

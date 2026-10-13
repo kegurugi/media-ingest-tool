@@ -4,8 +4,10 @@ A macOS command-line tool that offloads camera and audio cards to two or more
 destination drives, verifies every copy by checksum, and keeps reports and a
 media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 
-**Status:** build stage 1 of 8 is done: project config, folder and naming logic.
-The commands are stubs until later stages.
+**Status:** build stages 1–2 of 8 are done: config, naming, and verified
+multi-destination copying. `mit ingest` works; the shoot date is typed in by
+hand until metadata extraction (stage 3). Reports, the master log and the
+other commands come in later stages.
 
 ## Installation
 
@@ -16,11 +18,63 @@ Requires Python 3.9 or newer; developed on Python 3.13 (`brew install python@3.1
 .venv/bin/pip install -e ".[dev]"
 ```
 
-Run the tests:
+Run the tests (the full-volume and killed-copy tests use `hdiutil` and run on macOS only):
 
 ```bash
 .venv/bin/python -m pytest
 ```
+
+## Usage
+
+```bash
+.venv/bin/mit ingest
+```
+
+It asks for anything not given as an option:
+
+| Option | Meaning |
+|---|---|
+| `--source PATH` | The card, e.g. `/Volumes/A001` |
+| `--dest NAME` | Destination volume name (`SHOW01_DRV01A` means `/Volumes/SHOW01_DRV01A`) or path; repeat for each. Defaults come from `project.json` |
+| `--camera ID` | Camera ID from `project.json` |
+| `--date MMDDYYYY` | Shoot date |
+| `--media-type` | VIDEO, AUDIO or STILLS (still confirmed) |
+| `--copy-all` | Also copy macOS system files (see below) |
+| `--allow-same-volume` | **Testing only.** Allows destinations on the same drive |
+| `--config PATH` | Project config (default `project.json`, given before `ingest`) |
+
+You confirm the card name, the media type and the target paths before anything
+is copied. Exit status: `0` PASS, `1` FAIL or cancelled, `2` error before
+copying, `130` interrupted.
+
+### What gets copied
+
+Everything the camera wrote, with the card's folder structure (including empty
+folders) reproduced exactly. macOS clutter that the Mac adds to any mounted card
+is skipped by default and listed in the hash record: `.Spotlight-V100`,
+`.Trashes`, `.fseventsd`, `.TemporaryItems`, `.DocumentRevisions-V100`,
+`.DS_Store`, `.apdisk` and `._*` files. `--copy-all` copies them too.
+
+### Interrupted or failed cards
+
+A hidden marker, `.mit_incomplete.json`, is written into each card folder when
+copying starts and removed only when every file on every destination verifies.
+On a FAIL it stays and records why.
+
+When you next offload for that camera and day, the tool shows the incomplete
+card and asks whether the card in the reader is the same one. It also warns you
+if the volume name, file count or size differ. If you say yes:
+- the incomplete folder is **moved** to `<DRIVE>/_INCOMPLETE/<CARD>_<timestamp>/`
+  (with any old hash record), never deleted;
+- the card is copied fresh under the **same reel number**.
+
+If you say no, the next reel number is used and the incomplete card stays flagged.
+
+### Hash record
+
+`_REPORTS/<date>/<CARD>_hashes.json` on every destination holds each file's size,
+source xxHash64 and verification result per destination, plus the skipped
+clutter. It is never overwritten.
 
 ## Project config
 
@@ -69,7 +123,27 @@ Card folders are named `[SHOW][YYMMDD][CAM][REEL]`, e.g. `ABC261012A01` or
   exists on a destination, under any media type, the tool stops.
 - A destination that isn't mounted is an error. The tool never creates a stray
   `/Volumes/<name>` folder on the boot disk.
+- Each copy must go to a **separate physical drive**, and no destination can
+  be the source card or inside it. At least two destinations are required.
+- **Space check first.** If any destination lacks room (with files rounded up to
+  whole disk blocks, plus a 100 MB margin), nothing is created anywhere.
+- Each source file is read once. The xxHash64 is computed from those bytes as
+  they're written to every destination at once. Destination files are created
+  with "fail if it exists", so not even a single file can be overwritten.
+  Each finished file is flushed to the drive with macOS `F_FULLFSYNC`, which
+  also empties the drive's own write cache. Modification times are copied.
+- **Verification re-reads every destination file** and compares its hash with
+  the source hash; a matching size is never enough. Missing files, missing
+  folders and unexpected extra files also fail. The OS file cache is turned off
+  (`F_NOCACHE`) both when writing and when re-reading, so the re-read should
+  come from the drive and not from memory. *Caveat:* this is the strongest
+  check available without unmounting the drive. It can't be proven from a
+  test that every byte came off the disk, and a drive's own internal cache is
+  outside the tool's control.
+- Any failure on any destination marks the whole card **FAILED**: a loud
+  warning, the marker kept, and a non-zero exit status.
 - Logs and config are written to a temp file and atomically swapped in, so a
-  crash can't corrupt them. (If that write fails, its own half-written temp
-  file is removed; nothing else is ever deleted.)
-- Copy verification, space checks and FAILED handling arrive in stage 2.
+  crash can't corrupt them.
+- **Deletions.** The tool never deletes media or folders. It deletes only two
+  kinds of file, both its own: the incomplete marker after a verified copy, and
+  a half-written temp file if an atomic write fails.

@@ -19,3 +19,19 @@ class ReelMismatchError(IngestError):
 
 class DestinationExistsError(IngestError):
     """A card folder already exists on a destination. Never overwrite."""
+
+
+class SourceError(IngestError):
+    """The source card can't be read safely (unreadable file, symlink, changed during copy)."""
+
+
+class InsufficientSpaceError(IngestError):
+    """A destination doesn't have room for the card. Nothing was copied."""
+
+
+class CopyError(IngestError):
+    """Reading or writing failed during the copy."""
+
+
+class IncompleteMismatchError(IngestError):
+    """Destinations disagree about which cards are incomplete."""
