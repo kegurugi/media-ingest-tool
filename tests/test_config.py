@@ -126,7 +126,7 @@ def test_missing_file(tmp_path):
 
 def test_invalid_json_reports_line(tmp_path):
     path = tmp_path / "project.json"
-    path.write_text('{\n  "show_code": "ABC",\n}\n')
+    path.write_text('{\n  "show_code": "ABC"\n  "project_name": "X"\n}\n')  # missing comma
     with pytest.raises(ConfigError, match="line 3"):
         load_config(path)
 

@@ -9,10 +9,10 @@ The commands are stubs until later stages.
 
 ## Installation
 
-Requires Python 3.9 or newer.
+Requires Python 3.9 or newer; developed on Python 3.13 (`brew install python@3.13`).
 
 ```bash
-python3 -m venv .venv
+/opt/homebrew/bin/python3.13 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 ```
 
