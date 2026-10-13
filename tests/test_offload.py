@@ -113,8 +113,13 @@ def test_copy_error_marks_failed(sample_card, drives, monkeypatch):
     monkeypatch.setattr(diskio, "write_all", broken)
     r = offload_card(sample_card, drives)
     assert not r.passed and "No space left" in r.errors[0]
-    assert r.card_records == []
     assert all(read_marker(d).status == FAILED for d in r.card_dirs)
+    # A failed copy still gets a FAILED record and report.
+    record = read_card_record(drives[0] / "_REPORTS/10122026/ABC261012A01_card.json")
+    assert record["result"] == "FAIL" and "No space left" in record["errors"][0]
+    assert {s for f in record["files"] for s in f["verification"].values()} == {"NOT VERIFIED"}
+    assert all(d["result"] == "FAIL" for d in record["destinations"])
+    assert (drives[0] / "_REPORTS/10122026/ABC261012A01_report.html").exists()
 
 
 def test_existing_card_folder_stops_before_creating_anything(sample_card, drives):

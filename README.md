@@ -4,9 +4,10 @@ A macOS command-line tool that offloads camera and audio cards to two or more
 destination drives, verifies every copy by checksum, and keeps reports and a
 media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 
-**Status:** build stages 1–3 of 8 are done: config, naming, verified
-multi-destination copying and clip metadata. `mit ingest` works end to end.
-Reports, the master log and the other commands come in later stages. Sony and
+**Status:** build stages 1–4 of 8 are done: config, naming, verified
+multi-destination copying, clip metadata and the per-card job report.
+`mit ingest` and `mit report` work. The master log, daily card log and
+`mit verify` come in later stages. Sony and
 Canon XML sidecars aren't read yet; that waits for real sample cards.
 
 ## Installation
@@ -41,6 +42,8 @@ It asks for anything not given as an option:
 | `--camera ID` | Camera ID from `project.json` |
 | `--date MMDDYYYY` | Shoot date (overrides the proposal) |
 | `--media-type` | VIDEO, AUDIO or STILLS (still confirmed) |
+| `--operator NAME` | Operator, by name or number from `project.json` (asked if there are several) |
+| `--notes TEXT` | Notes for this card (otherwise asked at the confirmation step) |
 | `--copy-all` | Also copy macOS system files (see below) |
 | `--allow-same-volume` | **Testing only.** Allows destinations on the same drive |
 | `--config PATH` | Project config (default `project.json`, given before `ingest`) |
@@ -72,16 +75,45 @@ When you next offload for that camera and day, the tool shows the incomplete
 card and asks whether the card in the reader is the same one. It also warns you
 if the volume name, file count or size differ. If you say yes:
 - the incomplete folder is **moved** to `<DRIVE>/_INCOMPLETE/<CARD>_<timestamp>/`
-  (with any old card record), never deleted;
+  (with any old card record and report), never deleted;
 - the card is copied fresh under the **same reel number**.
 
 If you say no, the next reel number is used and the incomplete card stays flagged.
+
+### Job report
+
+`<CARD>_report.html` is written after every offload, PASS or FAIL, to
+`_REPORTS/<date>/` on every destination and into each card folder, so the
+report travels with the media. It shows:
+- the header: project, card, camera, shoot date, offload time, operator,
+  source and destination volumes, and a large PASS/FAIL banner;
+- a clip table with metadata and a verification column per destination;
+- other files (sidecars, proxies, ...), totals and notes.
+
+On a FAIL, every failed file is listed first in red. A copy that fails partway
+also gets a FAIL report, with files marked NOT VERIFIED. Stills cards with more
+than 100 stills get a summary, with the full list in a collapsed section.
+
+The report is a single self-contained HTML file. For a PDF, open it in a
+browser and use **File > Print > Save as PDF**; it's laid out for landscape
+printing.
+
+Rebuild the `_REPORTS` copies for a day from the card records:
+
+```bash
+.venv/bin/mit report 10122026
+```
+
+Destinations default to `default_destinations` in `project.json`; use `--dest`
+to name them. The report copy inside each card folder is never rewritten. It
+stays exactly as it was when the card was verified.
 
 ### Card record
 
 `_REPORTS/<date>/<CARD>_card.json` on every destination holds each file's size,
 source xxHash64 and verification result per destination, the skipped clutter,
-and each clip's metadata. It is never overwritten.
+each clip's metadata, and the job details: project, camera, operator, notes,
+times and transfer speed. It is never overwritten. Reports are built from it.
 
 ### Clip metadata
 

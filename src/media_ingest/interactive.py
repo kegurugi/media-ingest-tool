@@ -9,16 +9,18 @@ from pathlib import Path
 from typing import Callable, List, Optional, TextIO
 
 from .config import MEDIA_TYPES, load_config
-from .errors import NamingError
+from .errors import ConfigError, NamingError
 from .incomplete import find_incomplete_all, marker_differences, quarantine
-from .layout import card_dir
+from .layout import card_dir, reports_dir
 from .mediatype import choice_warnings, propose_media_type, scan_card
 from .metadata import clip_datetimes, find_tools, read_exif, select_clips
 from .naming import MAX_REEL, CardName
-from .offload import OffloadResult, preflight, run_offload
+from .offload import JobInfo, OffloadResult, preflight, run_offload
 from .reels import existing_reels, propose_reel
 from .shootdate import propose_shoot_date
 from .sources import list_source, volume_name
+from .records import read_card_record
+from .report import iter_card_records, report_filename, write_report
 from .space import format_bytes, require_space
 
 EXIT_PASS = 0
@@ -61,6 +63,9 @@ class Prompter:
                 return answer
             if default:
                 return default
+
+    def ask_optional(self, prompt: str) -> str:
+        return self.input_fn(f"{prompt}: ").strip()
 
     def confirm(self, prompt: str, default: bool = False) -> bool:
         hint = "Y/n" if default else "y/N"
@@ -122,6 +127,7 @@ def run_ingest(args, p: Prompter) -> int:
     else:
         p.say("Cameras: " + ", ".join(f"{c.id} ({c.description or c.model})" for c in cfg.cameras.values()))
         camera = cfg.camera(p.ask("Camera ID"))
+    operator = _choose_operator(p, cfg.operators, args.operator)
 
     p.say(f"\nScanning {source} ...")
     scan = scan_card(source)
@@ -193,8 +199,10 @@ def run_ingest(args, p: Prompter) -> int:
     p.say(f"  Source:  {source}  ({source_vol}): {len(listing.files):,} files, {format_bytes(listing.total_bytes)}")
     for d in drives:
         p.say(f"  Target:  {card_dir(d, card, media_type)}")
+    p.say(f"  Operator: {operator}")
     if recopy:
         p.say(f"  Recopy:  the incomplete {card} folders will be moved to _INCOMPLETE (not deleted)")
+    notes = args.notes if args.notes is not None else p.ask_optional("Notes for this card (optional, Enter to skip)")
     if not p.confirm("Start offload?"):
         p.say("Cancelled. Nothing was copied.")
         return EXIT_FAIL
@@ -210,6 +218,11 @@ def run_ingest(args, p: Prompter) -> int:
         result = run_offload(
             source, drives, card, media_type, listing=listing, copy_all=args.copy_all,
             progress=progress, allow_same_volume=args.allow_same_volume, exif=exif, tools=tools,
+            job=JobInfo(
+                project_name=cfg.project_name, show_code=cfg.show_code, camera_id=camera.id,
+                camera_model=camera.model, camera_description=camera.description, camera_shooter=camera.shooter,
+                operator=operator, notes=notes,
+            ),
         )
     except KeyboardInterrupt:
         progress.finish()
@@ -221,6 +234,58 @@ def run_ingest(args, p: Prompter) -> int:
     progress.finish()
     _print_summary(p, result)
     return EXIT_PASS if result.passed else EXIT_FAIL
+
+
+def run_report(args, p: Prompter) -> int:
+    """Rebuild the job reports in _REPORTS/<date>/ from the card records on each destination.
+
+    The report copies inside card folders are left exactly as written at offload.
+    """
+    shoot_date = parse_shoot_date(args.date)
+    names = args.dest or load_config(args.config).default_destinations
+    drives = [resolve_destination(d) for d in names]
+    rebuilt = 0
+    for drive in drives:
+        if not drive.is_dir():
+            p.say(f"  {drive}: not mounted, skipped")
+            continue
+        records = list(iter_card_records(reports_dir(drive, shoot_date)))
+        for path in records:
+            try:
+                record = read_card_record(path)
+                target = path.parent / report_filename(record["card"])
+                write_report(target, record)
+            except (OSError, ValueError, KeyError) as e:
+                p.say(f"  {path}: could not rebuild report: {e}")
+                continue
+            rebuilt += 1
+            p.say(f"  {target}")
+        if not records:
+            p.say(f"  {drive}: no card records for {shoot_date:%m/%d/%Y}")
+    p.say(f"Rebuilt {rebuilt} report(s).")
+    return EXIT_PASS if rebuilt else EXIT_ERROR
+
+
+def _choose_operator(p: Prompter, operators: List[str], given: Optional[str]) -> str:
+    """Operator from the config list, by name or number. Only one listed: chosen automatically."""
+    def match(text: str) -> Optional[str]:
+        text = text.strip()
+        if text.isdigit() and 1 <= int(text) <= len(operators):
+            return operators[int(text) - 1]
+        return next((o for o in operators if o.lower() == text.lower()), None)
+
+    if given:
+        found = match(given)
+        if found is None:
+            raise ConfigError(f"Operator {given!r} is not in project.json. Operators: {', '.join(operators)}")
+        return found
+    if len(operators) == 1:
+        return operators[0]
+    p.say("Operators: " + ", ".join(f"{i}) {o}" for i, o in enumerate(operators, 1)))
+    while True:
+        found = match(p.ask("Operator (number or name)"))
+        if found:
+            return found
 
 
 def _confirm_shoot_date(p: Prompter, given: Optional[str], times: List) -> date:
@@ -274,7 +339,9 @@ def _print_summary(p: Prompter, r: OffloadResult) -> None:
         f"Size:     {format_bytes(r.total_bytes)}",
         f"Elapsed:  {_hms(r.elapsed)}" + (f"  (copy {format_bytes(r.copy_speed)}/s)" if r.copy else ""),
     ]
-    lines += [f"Record:   {path}" for path in r.card_records]
+    lines += [f"Report:   {path}" for path in r.reports if "_REPORTS" in path.parts]
+    for w in r.warnings:
+        p.say(f"  warning: {w}")
     if r.passed:
         p.say("\n" + "=" * 72)
         for line in lines:

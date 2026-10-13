@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from pathlib import Path
 
@@ -37,12 +38,17 @@ def test_parse_media_type():
 
 @pytest.fixture
 def ingest(config_file, drives, monkeypatch, capsys):
-    """Run `mit ingest` with scripted answers. Returns (exit code, stdout+stderr, prompts asked)."""
+    """Run `mit ingest` with scripted answers. Returns (exit code, stdout+stderr, prompts asked).
+
+    The notes answer (blank by default) is inserted before the last answer, which
+    is always the "Start offload?" confirmation.
+    """
     monkeypatch.setattr(interactive, "run_offload", _small_chunks(interactive.run_offload))
 
-    def run(source, answers, camera="A", extra=(), date="10122026"):
+    def run(source, answers, camera="A", extra=(), date="10122026", notes=""):
         prompts = []
-        answers = list(answers)
+        if "--notes" not in extra:
+            answers = list(answers[:-1]) + [notes] + list(answers[-1:])
 
         def fake_input(prompt):
             prompts.append(prompt)
@@ -217,3 +223,34 @@ def test_date_option_overrides_proposal(ingest, tmp_path):
     code, output, _ = ingest(card, ["", "", "y"])
     assert code == 0
     assert "--date 10122026 differs from the earliest clip date 10112026" in output
+
+
+@pytest.fixture
+def two_operators(config_file):
+    data = json.loads(config_file.read_text())
+    data["operators"] = ["Alex", "Robin"]
+    config_file.write_text(json.dumps(data))
+    return config_file
+
+
+def test_operator_chosen_by_number_and_notes_recorded(ingest, two_operators, sample_card, drives):
+    code, output, prompts = ingest(sample_card, ["2", "", "", "y"], notes="Interviews; mag 2")
+    assert code == 0, output
+    assert "Operator (number or name)" in prompts[0] and "1) Alex, 2) Robin" in output
+    record = json.loads((drives[0] / "_REPORTS/10122026/ABC261012A01_card.json").read_text())
+    assert record["operator"] == "Robin" and record["notes"] == "Interviews; mag 2"
+    assert "Report:   " in output and "_REPORTS/10122026/ABC261012A01_report.html" in output
+
+
+def test_operator_and_notes_options(ingest, two_operators, sample_card, drives):
+    code, output, prompts = ingest(sample_card, ["", "", "y"], extra=("--operator", "alex", "--notes", "Wides"))
+    assert code == 0, output
+    assert not any("Notes" in p or "Operator" in p for p in prompts)
+    record = json.loads((drives[0] / "_REPORTS/10122026/ABC261012A01_card.json").read_text())
+    assert (record["operator"], record["notes"]) == ("Alex", "Wides")
+
+
+def test_unknown_operator(config_file, sample_card, drives, capsys):
+    code = main(["--config", str(config_file), "ingest", "--source", str(sample_card), "--dest", str(drives[0]),
+                 "--dest", str(drives[1]), "--camera", "A", "--operator", "Nobody", "--allow-same-volume"])
+    assert code == 2 and "Operator 'Nobody' is not in project.json" in capsys.readouterr().err
