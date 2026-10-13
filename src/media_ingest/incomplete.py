@@ -21,7 +21,7 @@ from typing import Dict, List, Optional
 from .config import MEDIA_TYPES
 from .errors import IncompleteMismatchError, IngestError, NamingError
 from .fileutil import atomic_write_text
-from .layout import DriveLike, hash_record_path, media_dir, require_mounted
+from .layout import DriveLike, card_record_path, media_dir, require_mounted
 from .naming import CardName
 from .sources import SourceListing
 
@@ -142,7 +142,7 @@ def marker_differences(marker: Marker, listing: SourceListing, source_volume: st
 def quarantine(item: IncompleteCard, drive: DriveLike, now: Optional[datetime] = None) -> Path:
     """Move an incomplete card folder out of the media folders. Nothing is deleted.
 
-    A hash record left by a failed attempt is moved alongside it, so the
+    A card record left by a failed attempt is moved alongside it, so the
     recopy can write a fresh one without overwriting the old.
     """
     drive = require_mounted(drive)
@@ -156,8 +156,8 @@ def quarantine(item: IncompleteCard, drive: DriveLike, now: Optional[datetime] =
     target = target_root / f"{item.card}_{now:%Y%m%d-%H%M%S}"
     if target.exists():
         raise IngestError(f"{target} already exists")
-    record = hash_record_path(drive, item.card)
-    record_target = target_root / f"{target.name}_hashes.json"
+    record = card_record_path(drive, item.card)
+    record_target = target_root / f"{target.name}_card.json"
     if record.exists() and record_target.exists():
         raise IngestError(f"{record_target} already exists")
     os.rename(item.path, target)  # same volume: a rename, not a copy

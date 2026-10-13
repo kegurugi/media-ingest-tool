@@ -56,8 +56,9 @@ def card_report_path(drive: DriveLike, card: CardName) -> Path:
     return reports_dir(drive, card.shoot_date) / f"{card}_report.html"
 
 
-def hash_record_path(drive: DriveLike, card: CardName) -> Path:
-    return reports_dir(drive, card.shoot_date) / f"{card}_hashes.json"
+def card_record_path(drive: DriveLike, card: CardName) -> Path:
+    """Per-card JSON record: hashes, verification results and clip metadata."""
+    return reports_dir(drive, card.shoot_date) / f"{card}_card.json"
 
 
 def daily_log_path(drive: DriveLike, shoot_date: date) -> Path:

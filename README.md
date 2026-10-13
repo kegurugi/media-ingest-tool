@@ -4,14 +4,16 @@ A macOS command-line tool that offloads camera and audio cards to two or more
 destination drives, verifies every copy by checksum, and keeps reports and a
 media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 
-**Status:** build stages 1–2 of 8 are done: config, naming, and verified
-multi-destination copying. `mit ingest` works; the shoot date is typed in by
-hand until metadata extraction (stage 3). Reports, the master log and the
-other commands come in later stages.
+**Status:** build stages 1–3 of 8 are done: config, naming, verified
+multi-destination copying and clip metadata. `mit ingest` works end to end.
+Reports, the master log and the other commands come in later stages. Sony and
+Canon XML sidecars aren't read yet; that waits for real sample cards.
 
 ## Installation
 
 Requires Python 3.9 or newer; developed on Python 3.13 (`brew install python@3.13`).
+Clip metadata needs `ffprobe` and `exiftool` (`brew install ffmpeg exiftool`).
+Without them the offload still works, with a loud warning and blank metadata.
 
 ```bash
 /opt/homebrew/bin/python3.13 -m venv .venv
@@ -37,21 +39,26 @@ It asks for anything not given as an option:
 | `--source PATH` | The card, e.g. `/Volumes/A001` |
 | `--dest NAME` | Destination volume name (`SHOW01_DRV01A` means `/Volumes/SHOW01_DRV01A`) or path; repeat for each. Defaults come from `project.json` |
 | `--camera ID` | Camera ID from `project.json` |
-| `--date MMDDYYYY` | Shoot date |
+| `--date MMDDYYYY` | Shoot date (overrides the proposal) |
 | `--media-type` | VIDEO, AUDIO or STILLS (still confirmed) |
 | `--copy-all` | Also copy macOS system files (see below) |
 | `--allow-same-volume` | **Testing only.** Allows destinations on the same drive |
 | `--config PATH` | Project config (default `project.json`, given before `ingest`) |
 
-You confirm the card name, the media type and the target paths before anything
-is copied. Exit status: `0` PASS, `1` FAIL or cancelled, `2` error before
+You confirm the shoot date, the card name, the media type and the target paths
+before anything is copied.
+
+The **shoot date** is proposed from the earliest clip date on the card (read
+with exiftool, without changing the card). If the clips fall on more than one
+date, there's a loud warning and you must type the date; no default is
+offered. If no clip has a date, you're asked to type it. Exit status: `0` PASS, `1` FAIL or cancelled, `2` error before
 copying, `130` interrupted.
 
 ### What gets copied
 
 Everything the camera wrote, with the card's folder structure (including empty
 folders) reproduced exactly. macOS clutter that the Mac adds to any mounted card
-is skipped by default and listed in the hash record: `.Spotlight-V100`,
+is skipped by default and listed in the card record: `.Spotlight-V100`,
 `.Trashes`, `.fseventsd`, `.TemporaryItems`, `.DocumentRevisions-V100`,
 `.DS_Store`, `.apdisk` and `._*` files. `--copy-all` copies them too.
 
@@ -65,16 +72,37 @@ When you next offload for that camera and day, the tool shows the incomplete
 card and asks whether the card in the reader is the same one. It also warns you
 if the volume name, file count or size differ. If you say yes:
 - the incomplete folder is **moved** to `<DRIVE>/_INCOMPLETE/<CARD>_<timestamp>/`
-  (with any old hash record), never deleted;
+  (with any old card record), never deleted;
 - the card is copied fresh under the **same reel number**.
 
 If you say no, the next reel number is used and the incomplete card stays flagged.
 
-### Hash record
+### Card record
 
-`_REPORTS/<date>/<CARD>_hashes.json` on every destination holds each file's size,
-source xxHash64 and verification result per destination, plus the skipped
-clutter. It is never overwritten.
+`_REPORTS/<date>/<CARD>_card.json` on every destination holds each file's size,
+source xxHash64 and verification result per destination, the skipped clutter,
+and each clip's metadata. It is never overwritten.
+
+### Clip metadata
+
+For every clip: filename, path, size, xxHash64, duration, start timecode,
+codec, resolution, frame rate, creation date/time, camera model, and for audio
+the sample rate and channels. It's read after verification from the first
+destination that verified, not from the card.
+
+- **Clips** are video, standalone audio and stills. Sony proxies
+  (`M4ROOT/SUB`), thumbnails and sidecar files are copied and hashed but aren't
+  listed as clips.
+- **Sources:** ffprobe gives codec, resolution, frame rate, duration and video
+  timecode; exiftool gives dates, camera model and stills data. Each value
+  records its source in `sources`.
+- **Audio timecode** is calculated exactly from the BWF time reference and the
+  timecode rate in the file's iXML. Without an iXML rate it stays blank.
+- **Dates are kept as the camera wrote them.** MP4/MOV container times are
+  labelled UTC, but many cameras write local time there, so they aren't
+  converted. This needs checking against real FX6/C80 cards.
+- **Nothing is guessed.** A field no source provides stays blank, and unreadable
+  files get a note.
 
 ## Project config
 

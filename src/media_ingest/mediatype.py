@@ -72,25 +72,48 @@ def scan_card(root: Union[str, Path]) -> CardScan:
         raise IngestError(f"Source card {root} not found or not a folder")
 
     scan = CardScan(structures=[s for s in VIDEO_STRUCTURES if (root / s).is_dir()])
-    structure_parts = [PurePosixPath(s).parts for s in scan.structures]
 
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
-        rel_parts = tuple(p.upper() for p in Path(dirpath).relative_to(root).parts)
-        in_video_tree = any(rel_parts[: len(s)] == s for s in structure_parts)
+        rel_dir = PurePosixPath(*Path(dirpath).relative_to(root).parts)
         for name in filenames:
             if name.startswith("."):
                 continue
-            ext = os.path.splitext(name)[1].lower()
-            if ext in VIDEO_EXTENSIONS:
+            kind = classify_file(str(rel_dir / name))
+            if kind in (VIDEO, PROXY):
                 scan.video += 1
-            elif ext in AUDIO_EXTENSIONS:
+            elif kind == AUDIO:
                 scan.audio += 1
-            elif ext in STILLS_EXTENSIONS and not in_video_tree:
+            elif kind == STILL:
                 scan.stills += 1
             else:
                 scan.other += 1
     return scan
+
+
+VIDEO, PROXY, AUDIO, STILL = "video", "proxy", "audio", "still"
+
+_VIDEO_STRUCTURE_PARTS = [PurePosixPath(s).parts for s in VIDEO_STRUCTURES]
+
+
+def classify_file(rel_path: str) -> Optional[str]:
+    """What a file on a card is: video, proxy, audio, still, or None (sidecars, system files).
+
+    Images inside camera video structures are thumbnails, not stills. Sony's
+    low-res proxies (M4ROOT/SUB) are PROXY, so they aren't listed as separate clips.
+    """
+    parts = tuple(p.upper() for p in PurePosixPath(rel_path).parts)
+    ext = os.path.splitext(rel_path)[1].lower()
+    in_video_tree = any(parts[: len(s)] == s for s in _VIDEO_STRUCTURE_PARTS)
+    if ext in VIDEO_EXTENSIONS:
+        if "M4ROOT" in parts and "SUB" in parts:
+            return PROXY
+        return VIDEO
+    if ext in AUDIO_EXTENSIONS:
+        return AUDIO
+    if ext in STILLS_EXTENSIONS and not in_video_tree:
+        return STILL
+    return None
 
 
 def propose_media_type(scan: CardScan, camera: Optional[Camera] = None) -> MediaTypeProposal:

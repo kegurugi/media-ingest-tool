@@ -40,7 +40,7 @@ def ingest(config_file, drives, monkeypatch, capsys):
     """Run `mit ingest` with scripted answers. Returns (exit code, stdout+stderr, prompts asked)."""
     monkeypatch.setattr(interactive, "run_offload", _small_chunks(interactive.run_offload))
 
-    def run(source, answers, camera="A", extra=()):
+    def run(source, answers, camera="A", extra=(), date="10122026"):
         prompts = []
         answers = list(answers)
 
@@ -51,7 +51,9 @@ def ingest(config_file, drives, monkeypatch, capsys):
         monkeypatch.setattr("builtins.input", fake_input)
         argv = ["--config", str(config_file), "ingest", "--source", str(source),
                 "--dest", str(drives[0]), "--dest", str(drives[1]),
-                "--camera", camera, "--date", "10122026", "--allow-same-volume", *extra]
+                "--camera", camera, "--allow-same-volume", *extra]
+        if date:
+            argv += ["--date", date]
         code = main(argv)
         out = capsys.readouterr()
         assert not answers, f"unused answers: {answers}"
@@ -165,3 +167,53 @@ def test_same_drive_refused_without_test_flag(config_file, sample_card, drives, 
                  "--dest", str(drives[0]), "--dest", str(drives[1])])
     assert code == 2
     assert "same drive" in capsys.readouterr().err
+
+
+needs_ffmpeg = pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="needs ffmpeg")
+
+
+def _clip(path, created):
+    import subprocess
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25", "-t", "1",
+                    "-c:v", "libx264", "-metadata", f"creation_time={created}", str(path)], check=True)
+
+
+@needs_ffmpeg
+def test_shoot_date_proposed_from_clips(ingest, tmp_path, drives):
+    card = tmp_path / "A001"
+    _clip(card / "PRIVATE/M4ROOT/CLIP/C0001.MP4", "2026-10-12T08:01:00Z")
+    _clip(card / "PRIVATE/M4ROOT/CLIP/C0002.MP4", "2026-10-12T18:44:00Z")
+    code, output, prompts = ingest(card, date=None, answers=["", "", "", "y"])
+    assert code == 0, output
+    assert "Shoot date (MMDDYYYY) [10122026]" in prompts[0]
+    assert "2026-10-12 08:01 to 2026-10-12 18:44" in output
+    assert (drives[0] / "10122026/VIDEO/ABC261012A01").is_dir()
+
+
+@needs_ffmpeg
+def test_midnight_card_must_be_typed(ingest, tmp_path, drives):
+    card = tmp_path / "A001"
+    _clip(card / "C0001.MP4", "2026-10-12T23:50:00Z")
+    _clip(card / "C0002.MP4", "2026-10-13T00:20:00Z")
+    code, output, prompts = ingest(card, date=None, answers=["10122026", "", "", "y"])
+    assert code == 0, output
+    assert "more than one date: 10/12/2026, 10/13/2026" in output
+    assert prompts[0] == "Shoot date (MMDDYYYY): "  # no default offered
+    assert (drives[0] / "10122026/VIDEO/ABC261012A01").is_dir()
+
+
+def test_card_without_dates_asks(ingest, sample_card, drives):
+    code, output, prompts = ingest(sample_card, date=None, answers=["10132026", "", "", "y"])
+    assert code == 0
+    assert "No clip dates found" in output
+    assert (drives[0] / "10132026/VIDEO/ABC261013A01").is_dir()
+
+
+@needs_ffmpeg
+def test_date_option_overrides_proposal(ingest, tmp_path):
+    card = tmp_path / "A001"
+    _clip(card / "C0001.MP4", "2026-10-11T22:00:00Z")
+    code, output, _ = ingest(card, ["", "", "y"])
+    assert code == 0
+    assert "--date 10122026 differs from the earliest clip date 10112026" in output

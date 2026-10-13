@@ -103,8 +103,8 @@ def test_failed_card_recopy_moves_old_hash_record(sample_card, drives, monkeypat
     result, moved = recopy(sample_card, drives)
     assert result.passed
     for d, m in zip(drives, moved):
-        assert (d / "_INCOMPLETE" / f"{m.name}_hashes.json").exists()
-        assert (d / "_REPORTS/10122026/ABC261012A01_hashes.json").exists()
+        assert (d / "_INCOMPLETE" / f"{m.name}_card.json").exists()
+        assert (d / "_REPORTS/10122026/ABC261012A01_card.json").exists()
 
 
 def test_destinations_disagree(sample_card, drives):

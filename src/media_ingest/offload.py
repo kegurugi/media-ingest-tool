@@ -6,8 +6,9 @@ Steps:
   3. Create card folders and write incomplete markers.
   4. Copy to all destinations, hashing the source.
   5. Re-read and verify every destination file.
-  6. Write the hash record on every destination.
-  7. Remove the markers only if everything passed; otherwise mark FAILED.
+  6. Extract clip metadata from a verified copy.
+  7. Write the card record (hashes, results, metadata) on every destination.
+  8. Remove the markers only if everything passed; otherwise mark FAILED.
 """
 from __future__ import annotations
 
@@ -23,9 +24,10 @@ from . import __version__, diskio
 from .copier import CopyResult, ProgressFn, copy_card
 from .errors import CopyError, DestinationExistsError, IngestError, SourceError
 from .incomplete import COPYING, FAILED, MARKER_NAME, Marker, remove_marker, write_marker
-from .layout import create_card_folder, find_existing_card, hash_record_path, prepare_drive, require_mounted
+from .layout import card_record_path, create_card_folder, find_existing_card, prepare_drive, require_mounted
 from .naming import CardName
-from .records import write_hash_record
+from .metadata import ClipMetadata, ToolStatus, extract_card, find_tools
+from .records import write_card_record
 from .sources import SourceListing, list_source, volume_name
 from .space import require_space
 from .verify import DestinationVerification, expected_files, verify_destinations
@@ -45,7 +47,8 @@ class OffloadResult:
     card_dirs: List[Path] = field(default_factory=list)
     copy: Optional[CopyResult] = None
     verifications: List[DestinationVerification] = field(default_factory=list)
-    hash_records: List[Path] = field(default_factory=list)
+    clips: List[ClipMetadata] = field(default_factory=list)
+    card_records: List[Path] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     elapsed: float = 0.0
 
@@ -114,6 +117,8 @@ def run_offload(
     progress: Optional[ProgressFn] = None,
     allow_same_volume: bool = False,
     chunk_size: int = diskio.CHUNK_SIZE,
+    exif: Optional[Dict[str, Dict[str, Any]]] = None,
+    tools: Optional[ToolStatus] = None,
 ) -> OffloadResult:
     """Offload one card. Returns a result whose .passed says PASS or FAIL.
 
@@ -174,14 +179,19 @@ def run_offload(
         ignore=[MARKER_NAME],
     )
 
-    record = _hash_record(result, copy_all)
+    # Metadata comes from the first destination that verified, never the card again.
+    verified = next((v.card_dir for v in result.verifications if v.ok), None)
+    if verified is not None:
+        result.clips = extract_card(verified, listing.files, result.copy.hashes, exif=exif, tools=tools or find_tools())
+
+    record = _card_record(result, copy_all)
     for d in drives:
-        path = hash_record_path(d, card)
+        path = card_record_path(d, card)
         try:
-            write_hash_record(path, record)
-            result.hash_records.append(path)
+            write_card_record(path, record)
+            result.card_records.append(path)
         except (OSError, IngestError) as e:
-            result.errors.append(f"Could not write hash record on {d}: {e}")
+            result.errors.append(f"Could not write card record on {d}: {e}")
 
     if result.passed:
         for card_dir in result.card_dirs:
@@ -210,7 +220,7 @@ def _failure_summary(result: OffloadResult) -> str:
     return "; ".join(parts)
 
 
-def _hash_record(result: OffloadResult, copy_all: bool) -> Dict[str, Any]:
+def _card_record(result: OffloadResult, copy_all: bool) -> Dict[str, Any]:
     statuses = {v.card_dir: v.statuses() for v in result.verifications}
     destinations = []
     for drive, card_dir, v in zip(result.drives, result.card_dirs, result.verifications):
@@ -252,6 +262,7 @@ def _hash_record(result: OffloadResult, copy_all: bool) -> Dict[str, Any]:
         "dirs": result.listing.dirs,
         "skipped": result.listing.skipped,
         "files": files,
+        "clips": [c.to_dict() for c in result.clips],
     }
 
 

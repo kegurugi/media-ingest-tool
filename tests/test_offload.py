@@ -10,7 +10,7 @@ from media_ingest.errors import DestinationExistsError, InsufficientSpaceError, 
 from media_ingest.incomplete import FAILED, MARKER_NAME, read_marker
 from media_ingest.naming import CardName
 from media_ingest.offload import preflight, run_offload
-from media_ingest.records import read_hash_record
+from media_ingest.records import read_card_record
 
 CARD = CardName.parse("ABC261012A01")
 CLIP1 = "PRIVATE/M4ROOT/CLIP/C0001.MP4"
@@ -35,7 +35,7 @@ def test_pass(sample_card, drives):
             else:
                 assert (card_dir / rel).read_bytes() == data
         assert not (card_dir / MARKER_NAME).exists()
-        record = read_hash_record(drive / "_REPORTS/10122026/ABC261012A01_hashes.json")
+        record = read_card_record(drive / "_REPORTS/10122026/ABC261012A01_card.json")
         assert record["result"] == "PASS"
         assert record["file_count"] == 5
         clip = next(f for f in record["files"] if f["path"] == CLIP1)
@@ -92,7 +92,7 @@ def test_one_changed_byte_fails_the_card(sample_card, drives, monkeypatch):
     assert [(c.rel_path, c.status) for c in r.verifications[1].failures] == [(CLIP1, "MISMATCH")]
     for drive, card_dir in zip(drives, r.card_dirs):
         assert read_marker(card_dir).status == FAILED
-        record = read_hash_record(drive / "_REPORTS/10122026/ABC261012A01_hashes.json")
+        record = read_card_record(drive / "_REPORTS/10122026/ABC261012A01_card.json")
         assert record["result"] == "FAIL"
         clip = next(f for f in record["files"] if f["path"] == CLIP1)
         assert clip["verification"] == {"SHOW01_DRV01A": "OK", "SHOW01_DRV01B": "MISMATCH"}
@@ -113,7 +113,7 @@ def test_copy_error_marks_failed(sample_card, drives, monkeypatch):
     monkeypatch.setattr(diskio, "write_all", broken)
     r = offload_card(sample_card, drives)
     assert not r.passed and "No space left" in r.errors[0]
-    assert r.hash_records == []
+    assert r.card_records == []
     assert all(read_marker(d).status == FAILED for d in r.card_dirs)
 
 
@@ -170,3 +170,23 @@ class TestPreflight:
         with pytest.raises(IngestError, match="mounted"):
             preflight(sample_card, [drives[0], tmp_path / "GONE"], allow_same_volume=True)
         assert not (tmp_path / "GONE").exists()
+
+
+def test_card_record_includes_clip_metadata(sample_card, drives):
+    r = offload_card(sample_card, drives)
+    record = read_card_record(drives[0] / "_REPORTS/10122026/ABC261012A01_card.json")
+    clips = {c["rel_path"]: c for c in record["clips"]}
+    assert set(clips) == {CLIP1, "PRIVATE/M4ROOT/CLIP/C0002.MP4"}  # sidecars aren't clips
+    assert clips[CLIP1]["xxh64"] == xxhash.xxh64(SAMPLE_CARD[CLIP1]).hexdigest()
+    assert clips[CLIP1]["size"] == len(SAMPLE_CARD[CLIP1])
+    assert r.clips and r.clips[0].rel_path == CLIP1
+
+
+def test_no_metadata_from_a_failed_copy(sample_card, drives, monkeypatch):
+    def corrupt_all(card_dirs):
+        for d in card_dirs:
+            (d / CLIP1).write_bytes(b"bad")
+
+    _after_copy(monkeypatch, corrupt_all)
+    r = offload_card(sample_card, drives)
+    assert not r.passed and r.clips == []

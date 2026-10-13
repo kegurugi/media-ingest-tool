@@ -13,9 +13,11 @@ from .errors import NamingError
 from .incomplete import find_incomplete_all, marker_differences, quarantine
 from .layout import card_dir
 from .mediatype import choice_warnings, propose_media_type, scan_card
+from .metadata import clip_datetimes, find_tools, read_exif, select_clips
 from .naming import MAX_REEL, CardName
 from .offload import OffloadResult, preflight, run_offload
 from .reels import existing_reels, propose_reel
+from .shootdate import propose_shoot_date
 from .sources import list_source, volume_name
 from .space import format_bytes, require_space
 
@@ -130,15 +132,14 @@ def run_ingest(args, p: Prompter) -> int:
         p.say(f"  Skipping {len(listing.skipped)} macOS system item(s): {', '.join(listing.skipped[:5])}"
               + (" ..." if len(listing.skipped) > 5 else ""))
 
-    # Shoot date: typed by the operator until metadata extraction (stage 3) can propose one.
-    while True:
-        try:
-            shoot_date = parse_shoot_date(args.date or p.ask("Shoot date (MMDDYYYY)"))
-            break
-        except NamingError as e:
-            if args.date:
-                raise
-            p.say(f"  {e}")
+    # Shoot date: proposed from clip dates (read-only pass over the card); the operator confirms.
+    tools = find_tools()
+    if tools.missing:
+        p.warn_loud([f"{', '.join(tools.missing)} not found: clip metadata will be incomplete.",
+                     "Install with: brew install exiftool ffmpeg"])
+    clips = select_clips(listing.files)
+    exif = read_exif(source, [f.rel_path for f, _ in clips], tools.exiftool)
+    shoot_date = _confirm_shoot_date(p, args.date, clip_datetimes(exif, clips))
 
     # Recopy of an incomplete or failed card keeps its reel number.
     card: Optional[CardName] = None
@@ -208,7 +209,7 @@ def run_ingest(args, p: Prompter) -> int:
     try:
         result = run_offload(
             source, drives, card, media_type, listing=listing, copy_all=args.copy_all,
-            progress=progress, allow_same_volume=args.allow_same_volume,
+            progress=progress, allow_same_volume=args.allow_same_volume, exif=exif, tools=tools,
         )
     except KeyboardInterrupt:
         progress.finish()
@@ -220,6 +221,35 @@ def run_ingest(args, p: Prompter) -> int:
     progress.finish()
     _print_summary(p, result)
     return EXIT_PASS if result.passed else EXIT_FAIL
+
+
+def _confirm_shoot_date(p: Prompter, given: Optional[str], times: List) -> date:
+    proposal = propose_shoot_date(times)
+    if times:
+        p.say(f"  Clip dates: {min(times):%Y-%m-%d %H:%M} to {max(times):%Y-%m-%d %H:%M} "
+              f"({len(times)} clip(s), times as written by the camera)")
+    if given:
+        chosen = parse_shoot_date(given)
+        if proposal.proposed and chosen != proposal.proposed:
+            p.say(f"  note: --date {chosen:%m%d%Y} differs from the earliest clip date {proposal.proposed:%m%d%Y}")
+        return chosen
+
+    default = None
+    if proposal.spans_midnight:
+        p.warn_loud([
+            "Clips on this card fall on more than one date: "
+            + ", ".join(f"{d:%m/%d/%Y}" for d in proposal.dates),
+            "A shoot day can run past midnight. Type the shoot date this card belongs to.",
+        ])
+    elif proposal.proposed:
+        default = f"{proposal.proposed:%m%d%Y}"
+    else:
+        p.say("  No clip dates found on this card. Type the shoot date.")
+    while True:
+        try:
+            return parse_shoot_date(p.ask("Shoot date (MMDDYYYY)", default))
+        except NamingError as e:
+            p.say(f"  {e}")
 
 
 def _ask_reel(p: Prompter, drives, show: str, shoot_date: date, cam: str) -> CardName:
@@ -244,7 +274,7 @@ def _print_summary(p: Prompter, r: OffloadResult) -> None:
         f"Size:     {format_bytes(r.total_bytes)}",
         f"Elapsed:  {_hms(r.elapsed)}" + (f"  (copy {format_bytes(r.copy_speed)}/s)" if r.copy else ""),
     ]
-    lines += [f"Hashes:   {path}" for path in r.hash_records]
+    lines += [f"Record:   {path}" for path in r.card_records]
     if r.passed:
         p.say("\n" + "=" * 72)
         for line in lines:
