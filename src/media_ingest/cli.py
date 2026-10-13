@@ -1,7 +1,4 @@
-"""Command-line entry point: `mit <command>`.
-
-Commands are stubs until their build stage lands.
-"""
+"""Command-line entry point: `mit <command>`."""
 from __future__ import annotations
 
 import argparse
@@ -10,10 +7,7 @@ from typing import List, Optional
 
 from . import __version__
 from .errors import IngestError
-from .interactive import EXIT_ERROR, Prompter, run_daylog, run_history, run_ingest, run_log, run_report
-
-_STAGE = {"verify": 7}
-
+from .interactive import EXIT_ERROR, Prompter, run_daylog, run_history, run_ingest, run_log, run_report, run_verify
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -36,8 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-same-volume", action="store_true",
         help="TESTING ONLY: allow destinations on the same drive as each other or the source",
     )
-    p = sub.add_parser("verify", help="re-hash a card folder against the log")
-    p.add_argument("card_folder")
+    p = sub.add_parser("verify", help="re-hash card folders against the hashes in the log")
+    p.add_argument("folders", nargs="*", metavar="card_folder", help="card folder(s) on a destination drive")
+    p.add_argument("--drive", help="check every current card the drive's log lists")
+    p.add_argument("--date", help="with --drive: only that shoot date (MMDDYYYY)")
+    p.add_argument("--no-record", action="store_true", help="don't record the results on the drive (strictly read-only)")
     p = sub.add_parser("report", help="regenerate the card reports and daily card log for a date")
     p.add_argument("date", help="shoot date, MMDDYYYY")
     p.add_argument("--dest", action="append", help="destination volume name or path (default: from project.json)")
@@ -66,18 +63,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.print_help()
         return 2
     runners = {"ingest": run_ingest, "report": run_report, "log": run_log, "history": run_history,
-               "daylog": run_daylog}
-    if args.command in runners:
-        try:
-            return runners[args.command](args, Prompter())
-        except IngestError as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return EXIT_ERROR
-        except (EOFError, KeyboardInterrupt):
-            print("\nCancelled. Nothing was copied.", file=sys.stderr)
-            return EXIT_ERROR
-    print(f"mit {args.command}: not implemented yet (build stage {_STAGE[args.command]})", file=sys.stderr)
-    return 2
+               "daylog": run_daylog, "verify": run_verify}
+    try:
+        return runners[args.command](args, Prompter())
+    except IngestError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return EXIT_ERROR
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled." + (" Nothing was copied." if args.command == "ingest" else ""), file=sys.stderr)
+        return EXIT_ERROR
 
 
 if __name__ == "__main__":

@@ -4,11 +4,10 @@ A macOS command-line tool that offloads camera and audio cards to two or more
 destination drives, verifies every copy by checksum, and keeps reports and a
 media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 
-**Status:** build stages 1–6 of 8 are done: config, naming, verified
+**Status:** build stages 1–7 of 8 are done: config, naming, verified
 multi-destination copying, clip metadata, the per-card job report, the master
-log with its spreadsheet export and project history, and the daily card log.
-`mit ingest`, `mit report`, `mit daylog`, `mit log` and `mit history` work.
-`mit verify` comes in stage 7. Sony and
+log with its spreadsheet export and project history, the daily card log, and
+`mit verify`. Phase 2 (ASC MHL manifests, proxies) is next. Sony and
 Canon XML sidecars aren't read yet; that waits for real sample cards.
 
 ## Installation
@@ -210,6 +209,42 @@ new fields at the end. Later cards that day don't ask again.
 
 edits a day's header fields, crew and day notes at any time and rebuilds its
 log. `--notes "..."` sets the day notes without prompts.
+
+### Verifying card folders later
+
+`mit verify` re-hashes card folders against the hashes in the log, for drive
+spot-checks or checking a shuttle drive on arrival. It only reads the media.
+
+```bash
+.venv/bin/mit verify /Volumes/SHOW01_DRV01B/10122026/VIDEO/ABC261012A01
+```
+
+```bash
+.venv/bin/mit verify --drive SHOW01_DRV01B --date 10122026
+```
+
+```bash
+.venv/bin/mit verify --drive SHOW01_DRV01B
+```
+
+- Give one or more card folders, or `--drive` to check every card the drive's
+  log lists (optionally just one `--date`). With `--drive`, a card folder that
+  should be there but isn't is a **FAIL**, and card folders on the drive that
+  the log doesn't list are noted.
+- **Where the hashes come from:** the drive's master log (each card's current
+  offload). Without a healthy log, the card record in `_REPORTS` is used
+  instead. If the log and card record disagree, that's a FAIL.
+- **What fails:** a changed byte (MISMATCH), a missing, truncated or unreadable
+  file, or a missing folder.
+- **Not failures:** unexpected extra files are listed as warnings. macOS clutter
+  such as `.DS_Store` and the job report copy are ignored.
+- **Results** are recorded in the drive's master log and on the spreadsheet's
+  **Verifications** sheet (failures in red). `--no-record` writes nothing.
+- **Exit status:** `0` all passed, `1` a card failed, `2` error (not a card
+  folder, nothing to verify against).
+
+Verify reads every byte: a full 8 TB drive at about 1 GB/s takes over two
+hours, so `--date` is useful for spot-checks.
 
 ### Card record
 

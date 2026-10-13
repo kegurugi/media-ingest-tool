@@ -9,7 +9,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 from . import diskio
 
@@ -65,12 +65,21 @@ def verify_destination(
     expected: Sequence[ExpectedFile],
     expected_dirs: Iterable[str] = (),
     ignore: Iterable[str] = (),
+    progress: Optional[Callable[[int, int, str], None]] = None,
 ) -> DestinationVerification:
-    """Re-hash every expected file in card_dir. Also flags missing folders and extra files."""
+    """Re-hash every expected file in card_dir. Also flags missing folders and extra files.
+
+    progress(bytes_done, bytes_total, rel_path) is called after each file.
+    """
     card_dir = Path(card_dir)
     result = DestinationVerification(card_dir=card_dir)
+    total = sum(e.size for e in expected)
+    done = 0
 
     for exp in expected:
+        done += exp.size
+        if progress:
+            progress(done, total, exp.rel_path)
         path = card_dir / exp.rel_path
         try:
             size = path.stat().st_size

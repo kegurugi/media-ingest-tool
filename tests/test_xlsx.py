@@ -47,7 +47,7 @@ def column(ws, name):
 
 
 def test_sheets_and_title(workbook):
-    assert workbook.sheetnames == ["Clips", "Cards", "Days", "All drives"]
+    assert workbook.sheetnames == ["Clips", "Cards", "Days", "Verifications", "All drives"]
     for ws in workbook:
         title = ws["A1"].value
         assert "SHOW01_DRV01A" in title and "ABC Example Show" in title and "exported 2026-10-13 09:30" in title

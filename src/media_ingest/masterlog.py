@@ -25,7 +25,7 @@ from .incomplete import INCOMPLETE_DIRNAME
 from .layout import REPORTS_DIRNAME, logs_dir, master_log_path, require_mounted
 from .timecode import end_timecode
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 LOCK_NAME = ".media_log.lock"
 LOCK_TIMEOUT = 60.0
 
@@ -75,6 +75,13 @@ CREATE TABLE project_summary (  -- copied from the project history on the Mac: e
     cards INTEGER, clips INTEGER, bytes INTEGER, failed INTEGER,
     PRIMARY KEY (drive_set, shoot_date)
 );
+CREATE TABLE verifications (  -- later re-checks of card folders with `mit verify`
+    id INTEGER PRIMARY KEY,
+    card TEXT NOT NULL, shoot_date TEXT, offload_uid TEXT,
+    verified_at TEXT NOT NULL, result TEXT NOT NULL,
+    files_checked INTEGER, bytes_checked INTEGER, failures INTEGER,
+    source TEXT, details TEXT, tool_version TEXT
+);
 CREATE INDEX files_offload ON files (offload_id);
 CREATE INDEX clips_offload ON clips (offload_id);
 CREATE INDEX offloads_date ON offloads (shoot_date);
@@ -102,6 +109,12 @@ def _upgrade(conn: sqlite3.Connection) -> None:
             drive_set TEXT NOT NULL, shoot_date TEXT NOT NULL,
             cards INTEGER, clips INTEGER, bytes INTEGER, failed INTEGER,
             PRIMARY KEY (drive_set, shoot_date))""")
+    if version < 4:
+        conn.execute("""CREATE TABLE IF NOT EXISTS verifications (
+            id INTEGER PRIMARY KEY, card TEXT NOT NULL, shoot_date TEXT, offload_uid TEXT,
+            verified_at TEXT NOT NULL, result TEXT NOT NULL,
+            files_checked INTEGER, bytes_checked INTEGER, failures INTEGER,
+            source TEXT, details TEXT, tool_version TEXT)""")
     if version < SCHEMA_VERSION:
         conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
 
@@ -194,6 +207,28 @@ def set_project_summary(drive: Path, project_summary: List[Dict[str, Any]],
             copy_into(target, conn)
             _upgrade(conn)
             _store_summary(conn, project_summary)
+
+        replace_db(target, build)
+
+
+def add_verifications(drive: Path, rows: List[Dict[str, Any]], lock_timeout: float = LOCK_TIMEOUT) -> None:
+    """Record `mit verify` results in the drive's log."""
+    drive = require_mounted(drive)
+    target = master_log_path(drive)
+    with _locked(drive, lock_timeout):
+        if not target.exists() or not is_healthy(target):
+            raise LogError(f"No healthy master log on {drive} to record the check in")
+
+        def build(conn: sqlite3.Connection) -> None:
+            copy_into(target, conn)
+            _upgrade(conn)
+            conn.executemany(
+                """INSERT INTO verifications (card, shoot_date, offload_uid, verified_at, result, files_checked,
+                       bytes_checked, failures, source, details, tool_version)
+                   VALUES (:card, :shoot_date, :offload_uid, :verified_at, :result, :files_checked,
+                       :bytes_checked, :failures, :source, :details, :tool_version)""",
+                rows,
+            )
 
         replace_db(target, build)
 

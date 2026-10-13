@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, List, Optional, TextIO
 
-from . import daily_log, history, masterlog
+from . import daily_log, history, masterlog, spotcheck
 from .daydetails import DayDetails, carried_forward, project_days_dir, read_day, write_day
 from .config import MEDIA_TYPES, load_config
 from .errors import ConfigError, IngestError, NamingError
@@ -440,6 +440,83 @@ def _edit_pairs(p: Prompter, title: str, pairs, key_name: str):
         value = p.ask_optional(f"  {key}")
         if value:
             result.append((key, value))
+
+
+def run_verify(args, p: Prompter) -> int:
+    """`mit verify`: re-hash card folders against the hashes in the log."""
+    if args.drive and args.folders:
+        raise IngestError("Give card folders or --drive, not both")
+    if args.date and not args.drive:
+        raise IngestError("--date needs --drive")
+    if not args.drive and not args.folders:
+        raise IngestError("Give one or more card folders, or --drive (optionally with --date)")
+
+    targets = []  # (folder, drive, card)
+    if args.drive:
+        drive = resolve_destination(args.drive)
+        if not drive.is_dir():
+            raise IngestError(f"{drive} not found. Is the drive mounted?")
+        shoot_date = parse_shoot_date(args.date) if args.date else None
+        listed = spotcheck.cards_on_drive(drive, shoot_date)
+        if not listed:
+            raise IngestError(f"No cards logged on {drive}" + (f" for {shoot_date:%m/%d/%Y}" if shoot_date else ""))
+        for name, rel in listed:
+            targets.append((drive / rel, drive, CardName.parse(name)))
+        for rel in spotcheck.unlisted_card_folders(drive, listed, shoot_date):
+            p.say(f"  note: {rel} is on the drive but not in its log (not checked)")
+    else:
+        for folder in args.folders:
+            drive, card, _ = spotcheck.locate_card(Path(folder))
+            spotcheck.load_expected(drive, card)  # fail early if there's nothing to verify against
+            targets.append((Path(folder).expanduser(), drive, card))
+
+    total = len(targets)
+    checks = []
+    p.say(f"Verifying {total} card(s)...")
+    for i, (folder, drive, card) in enumerate(targets, 1):
+        progress = _ProgressPrinter(p.err)
+        try:
+            check = spotcheck.check_card(folder, drive, card, progress=progress)
+        except IngestError as e:
+            check = spotcheck.CardCheck(card=str(card), drive=drive, folder=folder,
+                                        shoot_date=card.shoot_date.isoformat(), problems=[str(e)])
+        progress.finish()
+        checks.append(check)
+        status = "PASS" if check.passed else "FAIL"
+        p.say(f"  [{i}/{total}] {status}  {check.card}  {check.files_checked:,} files, "
+              f"{format_bytes(check.bytes_checked)}  (hashes from the {check.source or 'n/a'})")
+        for note in check.notes:
+            if not note.startswith("LOG/RECORD DISAGREE"):
+                p.say(f"      note: {note}")
+        for w in check.warnings:
+            p.say(f"      warning: {w}")
+
+    if not args.no_record:
+        for drive in dict.fromkeys(c.drive for c in checks):
+            try:
+                spotcheck.record_results(drive, [c for c in checks if c.drive == drive])
+                export_xlsx(drive)
+                p.say(f"  Recorded in the master log and spreadsheet on {drive.name}")
+            except (IngestError, OSError, sqlite3.Error) as e:
+                p.say(f"  warning: results not recorded on {drive.name}: {e}")
+
+    failed = [c for c in checks if not c.passed]
+    checked_bytes = sum(c.bytes_checked for c in checks)
+    if failed:
+        lines = [f"VERIFY FAILED: {len(failed)} of {total} card(s)", ""]
+        for c in failed:
+            lines.append(f"{c.card}  ({c.folder})")
+            lines += [f"    {problem}" for problem in c.problems]
+            lines += [f"    {f.status} {f.rel_path} {f.detail}".rstrip() for f in c.failures[:20]]
+            if len(c.failures) > 20:
+                lines.append(f"    ... and {len(c.failures) - 20} more")
+            lines += [f"    missing folder {d}" for d in c.missing_dirs]
+        p.warn_loud(lines)
+        return EXIT_FAIL
+    p.say("\n" + "=" * 72)
+    p.say(f"  PASS  {total} card(s) verified, {format_bytes(checked_bytes)}")
+    p.say("=" * 72)
+    return EXIT_PASS
 
 
 def _choose_operator(p: Prompter, operators: List[str], given: Optional[str]) -> str:

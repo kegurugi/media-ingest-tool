@@ -93,6 +93,18 @@ DAY_COLUMNS: List[Column] = [
     ("Failed cards", INT, lambda r: r["failed"]),
 ]
 
+VERIFY_COLUMNS: List[Column] = [
+    ("Verified at", TEXT, lambda r: (r["verified_at"] or "").replace("T", " ")),
+    ("Card", TEXT, lambda r: r["card"]),
+    ("Shoot date", TEXT, lambda r: r["shoot_date"]),
+    ("Result", TEXT, lambda r: r["result"]),
+    ("Files checked", INT, lambda r: r["files_checked"]),
+    ("GB checked", GB, lambda r: r["bytes_checked"]),
+    ("Problems", INT, lambda r: r["failures"]),
+    ("Hashes from", TEXT, lambda r: r["source"]),
+    ("Details", TEXT, lambda r: r["details"]),
+]
+
 ALL_DRIVES_COLUMNS: List[Column] = [
     ("Drive set", TEXT, lambda r: r["drive_set"]),
     ("This drive", TEXT, lambda r: "yes" if r["this_drive"] else ""),
@@ -119,6 +131,10 @@ def export_xlsx(drive: Path, now: Optional[datetime] = None) -> Path:
         ).fetchall()
         project = _project_rows(conn, drive.name)
         days = _days(conn, project)
+        has_verifications = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'verifications'").fetchone()
+        verifications = conn.execute(
+            "SELECT * FROM verifications ORDER BY verified_at, id").fetchall() if has_verifications else []
         summary_updated = conn.execute(
             "SELECT value FROM meta WHERE key = 'project_summary_updated'").fetchone()
         show = conn.execute("SELECT show_code, project_name FROM offloads ORDER BY offload_started DESC LIMIT 1").fetchone()
@@ -133,6 +149,8 @@ def export_xlsx(drive: Path, now: Optional[datetime] = None) -> Path:
            failed=lambda r: r["id"] in failed_offloads, grey=lambda r: r["id"] in superseded)
     _sheet(wb.create_sheet(), "Days", title, DAY_COLUMNS, days,
            failed=lambda r: r["failed"] > 0, grey=lambda r: False)
+    _sheet(wb.create_sheet(), "Verifications", title, VERIFY_COLUMNS, verifications,
+           failed=lambda r: r["result"] != "PASS", grey=lambda r: False)
     all_drives = wb.create_sheet()
     _sheet(all_drives, "All drives", title, ALL_DRIVES_COLUMNS, project,
            failed=lambda r: (r["failed"] or 0) > 0, grey=lambda r: False)
