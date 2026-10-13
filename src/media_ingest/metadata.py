@@ -12,7 +12,11 @@ Rules:
     are NOT converted; the source note says so.
   - exiftool and ffprobe only read files.
 
-Sony/Canon XML sidecars will be read here once real sample files are available.
+Sony XML sidecars (<clip>M01.XML, next to the clip in M4ROOT/CLIP or
+XDROOT/Clip) are the most trusted source for the recording time and camera:
+they carry local time with its UTC offset. The FX6's MXF container time is
+UTC, so without the sidecar a clip's date could be a day off. (Canon's C80 MP4
+sidecar holds nothing the clip itself doesn't, so it isn't needed.)
 """
 from __future__ import annotations
 
@@ -48,6 +52,7 @@ EXIF_TAGS = [
 SRC_EXIF = "exiftool"
 SRC_FFPROBE = "ffprobe"
 SRC_IXML = "BWF iXML"
+SRC_SONY_XML = "Sony XML"
 
 
 @dataclass
@@ -188,14 +193,96 @@ def camera_model(tags: Dict[str, Any]) -> str:
     return " ".join(p for p in (make, model) if p)
 
 
-def clip_datetimes(exif: Dict[str, Dict[str, Any]], clips: List[Tuple[SourceFile, str]]) -> List[datetime]:
-    """Clip creation times as the camera wrote them, for proposing the shoot date."""
+def clip_datetimes(exif: Dict[str, Dict[str, Any]], clips: List[Tuple[SourceFile, str]],
+                   root: Optional[Path] = None) -> List[datetime]:
+    """Clip creation times in the camera's local time, for proposing the shoot date.
+
+    With root, Sony XML sidecars are read first (local time with its offset).
+    """
     times = []
     for f, kind in clips:
-        created, _ = created_from_exif(exif.get(f.rel_path, {}), kind)
+        created = None
+        if root is not None and kind == VIDEO:
+            created = read_sony_xml(Path(root) / f.rel_path).get("created")
+        if not created:
+            created, _ = created_from_exif(exif.get(f.rel_path, {}), kind)
         if created:
             times.append(datetime.fromisoformat(created[:19]))
     return times
+
+
+# --- Sony XML sidecars --------------------------------------------------------
+
+def sony_sidecar(clip_path: Path) -> Optional[Path]:
+    """C0001.MP4 -> C0001M01.XML; A002C001_2610059N.MXF -> A002C001_2610059NM01.XML."""
+    clip_path = Path(clip_path)
+    for suffix in (".XML", ".xml"):
+        candidate = clip_path.with_name(f"{clip_path.stem}M01{suffix}")
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def sony_ltc(value: str) -> Tuple[str, bool]:
+    """Sony LtcChange value (BCD bytes, frames first) -> ('HH:MM:SS:FF', drop_frame)."""
+    raw = bytes.fromhex(value.strip())
+    if len(raw) != 4:
+        raise ValueError(f"not a Sony LTC value: {value!r}")
+    ff, ss, mm, hh = raw
+    drop = bool(ff & 0x40)
+
+    def bcd(byte: int, mask: int) -> int:
+        byte &= mask
+        tens, ones = byte >> 4, byte & 0x0F
+        if ones > 9:
+            raise ValueError(f"not BCD: {value!r}")
+        return tens * 10 + ones
+
+    hh_, mm_, ss_, ff_ = bcd(hh, 0x3F), bcd(mm, 0x7F), bcd(ss, 0x7F), bcd(ff, 0x3F)
+    return f"{hh_:02d}:{mm_:02d}:{ss_:02d}{';' if drop else ':'}{ff_:02d}", drop
+
+
+def read_sony_xml(clip_path: Path) -> Dict[str, str]:
+    """Fields from a clip's Sony NonRealTimeMeta sidecar: created, camera_model, start_timecode.
+
+    Returns {} if there's no sidecar or it can't be read. Namespaces are ignored.
+    """
+    sidecar = sony_sidecar(clip_path)
+    if sidecar is None:
+        return {}
+    try:
+        root = ET.parse(sidecar).getroot()
+    except (OSError, ET.ParseError):
+        return {}
+    if _local(root.tag) != "NonRealTimeMeta":
+        return {}
+    found: Dict[str, str] = {"sidecar": sidecar.name}
+    for el in root.iter():
+        tag = _local(el.tag)
+        if tag == "CreationDate" and "created" not in found:
+            value = (el.get("value") or "").strip()
+            try:
+                datetime.fromisoformat(value.replace("Z", "+00:00"))
+                found["created"] = value.replace("Z", "+00:00")
+            except ValueError:
+                pass
+        elif tag == "Device" and "camera_model" not in found:
+            maker, model = (el.get("manufacturer") or "").strip(), (el.get("modelName") or "").strip()
+            name = model if maker and model.lower().startswith(maker.lower()) else " ".join(p for p in (maker, model) if p)
+            if name:
+                found["camera_model"] = name
+            if el.get("serialNo"):
+                found["camera_serial"] = el.get("serialNo").strip()
+        elif tag == "LtcChange" and "start_timecode" not in found and el.get("frameCount") == "0":
+            try:
+                found["start_timecode"] = sony_ltc(el.get("value") or "")[0]
+            except ValueError:
+                pass
+    return found
+
+
+def _local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
 
 
 # --- ffprobe ----------------------------------------------------------------
@@ -282,6 +369,13 @@ def extract_clip(
         setattr(clip, name, value)
         clip.sources[name] = source
 
+    sony = read_sony_xml(path) if kind == VIDEO else {}
+    if sony:
+        put("created", sony.get("created"), f"{SRC_SONY_XML} CreationDate ({sony['sidecar']})")
+        model = sony.get("camera_model", "")
+        if model and sony.get("camera_serial"):
+            model += f" (S/N {sony['camera_serial']})"
+        put("camera_model", model, f"{SRC_SONY_XML} Device")
     created, created_src = created_from_exif(exif_tags, kind)
     put("created", created, created_src)
     put("camera_model", camera_model(exif_tags), SRC_EXIF)
@@ -314,6 +408,12 @@ def extract_clip(
         put("duration", _float(probe.get("format", {}).get("duration")), SRC_FFPROBE)
         if kind == VIDEO:
             put("start_timecode", _probe_timecode(probe), SRC_FFPROBE)
+    if sony.get("start_timecode"):
+        if not clip.start_timecode:
+            put("start_timecode", sony["start_timecode"], f"{SRC_SONY_XML} LtcChangeTable")
+        elif sony["start_timecode"] != clip.start_timecode:
+            clip.notes.append(f"Start TC in the clip ({clip.start_timecode}) differs from its Sony XML "
+                              f"({sony['start_timecode']})")
     elif tools.ffprobe:
         clip.notes.append("ffprobe could not read this file")
 

@@ -269,9 +269,13 @@ destination that verified, not from the card.
   records its source in `sources`.
 - **Audio timecode** is calculated exactly from the BWF time reference and the
   timecode rate in the file's iXML. Without an iXML rate it stays blank.
-- **Dates are kept as the camera wrote them.** MP4/MOV container times are
-  labelled UTC, but many cameras write local time there, so they aren't
-  converted. This needs checking against real FX6/C80 cards.
+- **Sony XML sidecars** (`<clip>M01.XML`) are read first for the recording
+  time, camera model and serial: they carry local time with its UTC offset.
+  The FX6 writes UTC into its MXF files, so without the sidecar evening clips
+  would land on the next day. The C80 MP4's own EXIF block has local time with
+  its offset, so the C80 sidecar isn't needed.
+- **Otherwise dates are kept as the camera wrote them** (container times are
+  not converted from "UTC").
 - **Nothing is guessed.** A field no source provides stays blank, and unreadable
   files get a note.
 

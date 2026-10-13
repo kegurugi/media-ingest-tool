@@ -212,3 +212,85 @@ def test_end_timecode(clips, path, end):
 def test_end_timecode_blank_without_start(clips):
     assert clips["OTHER/nometa.mp4"].end_timecode == ""
     assert clips["AUDIO/T003.WAV"].end_timecode == ""
+
+
+# --- Sony XML sidecars (layout and values from a real FX6 card) ---------------
+
+from media_ingest.metadata import read_sony_xml, sony_ltc
+
+SONY_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<NonRealTimeMeta xmlns="urn:schemas-professionalDisc:nonRealTimeMeta:ver.2.20" lastUpdate="2026-10-05T22:16:46-08:00">
+	<Duration value="48"/>
+	<LtcChangeTable tcFps="24" halfStep="false">
+		<LtcChange frameCount="0" value="{ltc}" status="increment"/>
+	</LtcChangeTable>
+	<CreationDate value="{created}"/>
+	<Device manufacturer="Sony" modelName="ILME-FX6V" serialNo="0000000"/>
+</NonRealTimeMeta>
+"""
+
+
+@pytest.mark.parametrize("value, tc, drop", [
+    ("16493810", "10:38:49:16", False),  # real FX6 clip
+    ("15271711", "11:17:27:15", False),
+    ("00000000", "00:00:00:00", False),
+    ("42000001", "01:00:00;02", True),  # drop-frame flag in the frames byte
+])
+def test_sony_ltc(value, tc, drop):
+    assert sony_ltc(value) == (tc, drop)
+
+
+@pytest.mark.parametrize("value", ["", "1649381", "zz493810", "1A493810"])
+def test_sony_ltc_rejects(value):
+    with pytest.raises(ValueError):
+        sony_ltc(value)
+
+
+@pytest.fixture
+def fx6_card(tmp_path):
+    """An XDROOT card whose MXF container time is UTC (next day) but the XML has local time."""
+    clip = tmp_path / "Untitled/XDROOT/Clip/A002C001_2610059N.MXF"
+    video(clip, codec=("-c:v", "mpeg2video", "-f", "mxf"), size="720x576",
+          extra=("-timecode", "10:38:49:16", "-metadata", "creation_time=2026-10-06T05:30:00Z"))
+    clip.with_name("A002C001_2610059NM01.XML").write_text(
+        SONY_XML.format(ltc="16493810", created="2026-10-05T21:30:00-08:00"))
+    return tmp_path / "Untitled"
+
+
+def test_sony_xml_fields(fx6_card):
+    got = read_sony_xml(fx6_card / "XDROOT/Clip/A002C001_2610059N.MXF")
+    assert got["created"] == "2026-10-05T21:30:00-08:00"
+    assert got["camera_model"] == "Sony ILME-FX6V" and got["camera_serial"] == "0000000"
+    assert got["start_timecode"] == "10:38:49:16"
+
+
+def test_sony_xml_wins_over_utc_container_time(fx6_card):
+    listing = list_source(fx6_card)
+    (c,) = extract_card(fx6_card, listing.files, {})
+    assert c.created == "2026-10-05T21:30:00-08:00"
+    assert c.sources["created"].startswith("Sony XML CreationDate")
+    assert c.camera_model == "Sony ILME-FX6V (S/N 0000000)"
+    assert c.start_timecode == "10:38:49:16" and c.sources["start_timecode"] == "ffprobe" and not c.notes
+
+
+def test_shoot_date_uses_sony_local_time(fx6_card):
+    clips = select_clips(list_source(fx6_card).files)
+    exif = read_exif(fx6_card, [f.rel_path for f, _ in clips])
+    assert propose_shoot_date(clip_datetimes(exif, clips)).proposed == date(2026, 10, 6)  # UTC: wrong day
+    assert propose_shoot_date(clip_datetimes(exif, clips, root=fx6_card)).proposed == date(2026, 10, 5)
+
+
+def test_sony_xml_timecode_disagreement_is_noted(fx6_card):
+    xml = fx6_card / "XDROOT/Clip/A002C001_2610059NM01.XML"
+    xml.write_text(SONY_XML.format(ltc="00000001", created="2026-10-05T21:30:00-08:00"))
+    (c,) = extract_card(fx6_card, list_source(fx6_card).files, {})
+    assert c.start_timecode == "10:38:49:16"
+    assert any("differs from its Sony XML (01:00:00:00)" in n for n in c.notes)
+
+
+def test_broken_or_foreign_sidecar_ignored(fx6_card):
+    xml = fx6_card / "XDROOT/Clip/A002C001_2610059NM01.XML"
+    xml.write_text("<not closed")
+    assert read_sony_xml(fx6_card / "XDROOT/Clip/A002C001_2610059N.MXF") == {}
+    xml.write_text("<SomethingElse><CreationDate value='2020-01-01T00:00:00'/></SomethingElse>")
+    assert read_sony_xml(fx6_card / "XDROOT/Clip/A002C001_2610059N.MXF") == {}

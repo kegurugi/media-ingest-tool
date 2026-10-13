@@ -150,7 +150,7 @@ def run_ingest(args, p: Prompter) -> int:
                      "Install with: brew install exiftool ffmpeg"])
     clips = select_clips(listing.files)
     exif = read_exif(source, [f.rel_path for f, _ in clips], tools.exiftool)
-    shoot_date = _confirm_shoot_date(p, args.date, clip_datetimes(exif, clips))
+    shoot_date = _confirm_shoot_date(p, args.date, clip_datetimes(exif, clips, root=source))
 
     # Day details (header fields, crew) are confirmed on the first offload of each day.
     days_dir = project_days_dir(args.config)
