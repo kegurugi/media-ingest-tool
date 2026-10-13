@@ -4,10 +4,10 @@ A macOS command-line tool that offloads camera and audio cards to two or more
 destination drives, verifies every copy by checksum, and keeps reports and a
 media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 
-**Status:** build stages 1–4 of 8 are done: config, naming, verified
-multi-destination copying, clip metadata and the per-card job report.
-`mit ingest` and `mit report` work. The master log, daily card log and
-`mit verify` come in later stages. Sony and
+**Status:** build stages 1–5 of 8 are done: config, naming, verified
+multi-destination copying, clip metadata, the per-card job report, and the
+master log with its spreadsheet export. `mit ingest`, `mit report` and
+`mit log` work. The daily card log and `mit verify` come in later stages. Sony and
 Canon XML sidecars aren't read yet; that waits for real sample cards.
 
 ## Installation
@@ -108,12 +108,53 @@ Destinations default to `default_destinations` in `project.json`; use `--dest`
 to name them. The report copy inside each card folder is never rewritten. It
 stays exactly as it was when the card was verified.
 
+### Master log and spreadsheet
+
+Each drive keeps its own master log, `_LOGS/media_log.sqlite`. It is the source
+of truth for that drive, cumulative across every offload to it:
+- `offloads`: one row per offload attempt, with this drive's result;
+- `clips`: one row per clip, tagged with card, date, camera, offload time,
+  this drive's volume and its verification status there;
+- `files`: every file's hash, including sidecars (used by `mit verify`).
+
+Failed attempts stay in the log as history. When a card is recopied, the earlier
+attempt is marked superseded and left out of totals.
+
+After every offload, `_LOGS/[DRIVE]_media_log.xlsx` is regenerated from the
+log. It has **Clips**, **Cards** and **Days** sheets (Days has the running total
+on the drive). It's a read-only view: edits made in it are never read back.
+Card names, reels, timecodes, checksums and dates are text cells; GB has two
+decimals; durations are `HH:MM:SS`; failures are red; superseded attempts are
+grey.
+
+**Safe writes.** The log is never changed in place. Each update copies it to a
+temp file, changes the copy, runs SQLite's integrity check, flushes it and
+atomically swaps it in. A lock file (`_LOGS/.media_log.lock`) makes a second
+offload running at the same time wait its turn. If the log can't be updated,
+the offload still passes (the media verified) and a loud warning says to run
+`mit log rebuild`.
+
+```bash
+.venv/bin/mit log export
+```
+
+```bash
+.venv/bin/mit log rebuild
+```
+
+`export` regenerates the spreadsheet. `rebuild` adds any card records on the
+drive (from `_REPORTS` and `_INCOMPLETE`) that the log is missing, then exports.
+It never removes rows from a healthy log. A damaged log is renamed aside, not
+deleted, and rebuilt from the records. Both take `--dest`; otherwise they use
+`default_destinations` from `project.json`.
+
 ### Card record
 
 `_REPORTS/<date>/<CARD>_card.json` on every destination holds each file's size,
 source xxHash64 and verification result per destination, the skipped clutter,
 each clip's metadata, and the job details: project, camera, operator, notes,
-times and transfer speed. It is never overwritten. Reports are built from it.
+times and transfer speed. It is never overwritten. Reports are built from it,
+and the master log can be rebuilt from it.
 
 ### Clip metadata
 

@@ -9,7 +9,8 @@ Steps:
   6. Extract clip metadata from a verified copy.
   7. Write the card record (hashes, results, metadata) and the job report on
      every destination, plus a report copy inside each card folder.
-  8. Remove the markers only if everything passed; otherwise mark FAILED.
+  8. Add the card to each drive's master log and regenerate its spreadsheet.
+  9. Remove the markers only if everything passed; otherwise mark FAILED.
 
 A copy that fails partway still gets a FAILED record and report.
 """
@@ -17,13 +18,15 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sqlite3
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from . import __version__, diskio
+from . import __version__, diskio, masterlog, xlsx_export
 from .copier import CopyResult, ProgressFn, copy_card
 from .errors import CopyError, DestinationExistsError, IngestError, SourceError
 from .incomplete import COPYING, FAILED, MARKER_NAME, Marker, remove_marker, write_marker
@@ -69,12 +72,14 @@ class OffloadResult:
     drives: List[Path]
     listing: SourceListing
     started_at: datetime
+    offload_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     card_dirs: List[Path] = field(default_factory=list)
     copy: Optional[CopyResult] = None
     verifications: List[DestinationVerification] = field(default_factory=list)
     clips: List[ClipMetadata] = field(default_factory=list)
     card_records: List[Path] = field(default_factory=list)
     reports: List[Path] = field(default_factory=list)
+    spreadsheets: List[Path] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)  # any error means FAIL
     warnings: List[str] = field(default_factory=list)  # problems that don't affect verification
     elapsed: float = 0.0
@@ -243,6 +248,20 @@ def _finish(result: OffloadResult, job: Optional[JobInfo], copy_all: bool, t0: f
             result.reports.append(path)
         except OSError as e:
             result.warnings.append(f"Could not write report {path}: {e}")
+    # A log problem is a warning, not a FAIL: the media verified, and the card
+    # record on the drive holds everything needed to rebuild the log.
+    for d in result.drives:
+        try:
+            masterlog.add_record(d, record)
+        except (OSError, IngestError, sqlite3.Error) as e:
+            result.warnings.append(
+                f"Master log on {d} was NOT updated: {e}. Run `mit log rebuild` once the problem is fixed."
+            )
+            continue
+        try:
+            result.spreadsheets.append(xlsx_export.export_xlsx(d))
+        except (OSError, IngestError, sqlite3.Error) as e:
+            result.warnings.append(f"Spreadsheet on {d} was NOT updated: {e}. Run `mit log export` to retry.")
 
 
 def _mark_failed(result: OffloadResult, marker: Marker, detail: str) -> None:
@@ -297,6 +316,7 @@ def _card_record(result: OffloadResult, copy_all: bool, job: Optional[JobInfo] =
     copy_seconds = result.copy.elapsed if result.copy else None
     return {
         "card": str(result.card),
+        "offload_id": result.offload_id,
         "media_type": result.media_type,
         "shoot_date": result.card.shoot_date.isoformat(),
         "project_name": job.project_name,

@@ -10,9 +10,9 @@ from typing import List, Optional
 
 from . import __version__
 from .errors import IngestError
-from .interactive import EXIT_ERROR, Prompter, run_ingest, run_report
+from .interactive import EXIT_ERROR, Prompter, run_ingest, run_log, run_report
 
-_STAGE = {"verify": 7, "daylog": 6, "log export": 5}
+_STAGE = {"verify": 7, "daylog": 6}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,7 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("date", help="shoot date, MMDDYYYY")
     p = sub.add_parser("log", help="master log tools")
     log_sub = p.add_subparsers(dest="log_command", metavar="<log command>", required=True)
-    log_sub.add_parser("export", help="regenerate the .xlsx from the SQLite log")
+    for name, help_text in (("export", "regenerate the .xlsx from the SQLite log"),
+                            ("rebuild", "add missing card records to the SQLite log, then export")):
+        lp = log_sub.add_parser(name, help=help_text)
+        lp.add_argument("--dest", action="append", help="destination volume name or path (default: from project.json)")
     return parser
 
 
@@ -55,17 +58,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.command:
         parser.print_help()
         return 2
-    if args.command in ("ingest", "report"):
+    runners = {"ingest": run_ingest, "report": run_report, "log": run_log}
+    if args.command in runners:
         try:
-            return (run_ingest if args.command == "ingest" else run_report)(args, Prompter())
+            return runners[args.command](args, Prompter())
         except IngestError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return EXIT_ERROR
         except (EOFError, KeyboardInterrupt):
             print("\nCancelled. Nothing was copied.", file=sys.stderr)
             return EXIT_ERROR
-    command = "log export" if args.command == "log" else args.command
-    print(f"mit {command}: not implemented yet (build stage {_STAGE[command]})", file=sys.stderr)
+    print(f"mit {args.command}: not implemented yet (build stage {_STAGE[args.command]})", file=sys.stderr)
     return 2
 
 

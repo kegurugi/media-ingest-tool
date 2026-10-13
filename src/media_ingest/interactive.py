@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 import sys
 import time
 from datetime import date
 from pathlib import Path
 from typing import Callable, List, Optional, TextIO
 
+from . import masterlog
 from .config import MEDIA_TYPES, load_config
-from .errors import ConfigError, NamingError
+from .errors import ConfigError, IngestError, NamingError
 from .incomplete import find_incomplete_all, marker_differences, quarantine
 from .layout import card_dir, reports_dir
 from .mediatype import choice_warnings, propose_media_type, scan_card
@@ -22,6 +24,7 @@ from .sources import list_source, volume_name
 from .records import read_card_record
 from .report import iter_card_records, report_filename, write_report
 from .space import format_bytes, require_space
+from .xlsx_export import export_xlsx
 
 EXIT_PASS = 0
 EXIT_FAIL = 1  # verification failed, or the operator cancelled
@@ -266,6 +269,31 @@ def run_report(args, p: Prompter) -> int:
     return EXIT_PASS if rebuilt else EXIT_ERROR
 
 
+def run_log(args, p: Prompter) -> int:
+    """`mit log export`: rebuild each drive's spreadsheet from its SQLite log.
+    `mit log rebuild`: add any card records missing from each drive's SQLite log, then export."""
+    names = args.dest or load_config(args.config).default_destinations
+    done = 0
+    for drive in (resolve_destination(d) for d in names):
+        if not drive.is_dir():
+            p.say(f"  {drive}: not mounted, skipped")
+            continue
+        try:
+            if args.log_command == "rebuild":
+                added, set_aside = masterlog.rebuild(drive)
+                if set_aside:
+                    p.warn_loud([f"The master log on {drive} was damaged.",
+                                 f"It was moved to {set_aside} (not deleted) and rebuilt from the card records."])
+                p.say(f"  {drive}: {added} card record(s) added to the master log")
+            path = export_xlsx(drive)
+        except (IngestError, OSError, sqlite3.Error) as e:
+            p.say(f"  {drive}: {e}")
+            continue
+        p.say(f"  {path}")
+        done += 1
+    return EXIT_PASS if done else EXIT_ERROR
+
+
 def _choose_operator(p: Prompter, operators: List[str], given: Optional[str]) -> str:
     """Operator from the config list, by name or number. Only one listed: chosen automatically."""
     def match(text: str) -> Optional[str]:
@@ -340,8 +368,8 @@ def _print_summary(p: Prompter, r: OffloadResult) -> None:
         f"Elapsed:  {_hms(r.elapsed)}" + (f"  (copy {format_bytes(r.copy_speed)}/s)" if r.copy else ""),
     ]
     lines += [f"Report:   {path}" for path in r.reports if "_REPORTS" in path.parts]
-    for w in r.warnings:
-        p.say(f"  warning: {w}")
+    if r.warnings:
+        p.warn_loud(["WARNING", *r.warnings])
     if r.passed:
         p.say("\n" + "=" * 72)
         for line in lines:
