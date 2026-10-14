@@ -14,6 +14,12 @@ history, the daily card log, `mit verify`, and Phase 2: ASC MHL manifests and
 optional proxies with LUTs. Field-tested on real Sony FX6 and Canon C80 cards
 and exFAT USB drives.
 
+**Field card:** a one-page on-set reference (commands, what each prompt means,
+wrap and shuttle checks, fixes): [docs/mit-field-card.pdf](docs/mit-field-card.pdf),
+or open [docs/quick-reference.html](docs/quick-reference.html) in a browser to
+read or print it. (`docs/quick-reference-body.html` is the same page without
+its page wrapper, used for the published web version.)
+
 ## Installation
 
 Get the code (the repository is private, so sign in to GitHub first with

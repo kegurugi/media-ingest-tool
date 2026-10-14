@@ -1,0 +1,197 @@
+<title>mit Field Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: a two-column field card, like a laminated camera-department reference; prints on one Letter page */
+:root {
+  --paper: #fbfbf9;
+  --ink: #1d2126;
+  --muted: #5d646c;
+  --rule: #d6d9dd;
+  --panel: #eef0f2;
+  --tape: #e4572e;      /* camera-tape orange: section keys and the one thing to remember */
+  --tape-ink: #ffffff;
+  --pass: #2f7d46;
+  --fail: #b8322a;
+  --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --body: "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #15181c; --ink: #e8eaed; --muted: #a2a9b1; --rule: #343a41; --panel: #1f2329;
+    --tape: #f06a43; --tape-ink: #15181c; --pass: #5fbf7d; --fail: #f07068; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #15181c; --ink: #e8eaed; --muted: #a2a9b1; --rule: #343a41; --panel: #1f2329;
+  --tape: #f06a43; --tape-ink: #15181c; --pass: #5fbf7d; --fail: #f07068; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font: 15px/1.45 var(--body); }
+.card { max-width: 1060px; margin: 0 auto; padding-block: 24px 40px; padding-inline: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 24px;
+         border-bottom: 3px solid var(--ink); padding-bottom: 10px; }
+h1 { font: 700 2.4rem/1 var(--display); letter-spacing: .02em; margin: 0; text-transform: uppercase; }
+h1 .tool { color: var(--tape); }
+header p { margin: 0; color: var(--muted); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 18px 32px; margin-top: 18px; }
+.cols > div { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+section { min-width: 0; }
+h2 { font: 700 1.15rem/1.1 var(--display); letter-spacing: .06em; text-transform: uppercase; margin: 0 0 8px;
+     display: flex; align-items: center; gap: 8px; }
+h2 .key { background: var(--tape); color: var(--tape-ink); font-size: .85em; padding: 2px 7px 1px; border-radius: 2px; }
+p { margin: 0 0 6px; }
+code, .cmd { font-family: var(--mono); font-size: .86em; }
+.cmd { display: block; background: var(--panel); border-left: 3px solid var(--ink); padding: 6px 10px; margin: 4px 0 8px;
+       overflow-x: auto; white-space: pre; }
+.muted { color: var(--muted); }
+ol.prompts { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+ol.prompts li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 10px;
+                border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
+ol.prompts .q { font-weight: 600; }
+.say { font-family: var(--mono); font-size: .84em; background: var(--panel); padding: 0 4px; border-radius: 2px; white-space: nowrap; }
+table { width: 100%; border-collapse: collapse; }
+td, th { text-align: left; vertical-align: top; padding: 4px 6px 4px 0; border-bottom: 1px solid var(--rule); }
+th { font: 600 .8em var(--body); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+td:first-child { width: 42%; }
+.pass { color: var(--pass); font-weight: 700; } .fail { color: var(--fail); font-weight: 700; }
+.rule { border: 2px solid var(--tape); padding: 8px 12px; border-radius: 3px; }
+.rule strong { color: var(--tape); }
+.tree { font-family: var(--mono); font-size: .8rem; line-height: 1.5; white-space: pre; overflow-x: auto;
+        background: var(--panel); padding: 8px 10px; margin: 0; }
+.name { display: flex; flex-wrap: wrap; gap: 2px; font-family: var(--mono); font-size: 1.15em; margin: 2px 0 4px; }
+.name span { display: inline-flex; flex-direction: column; align-items: center; }
+.name b { background: var(--panel); padding: 2px 6px; font-weight: 500; }
+.name small { font: 600 .65em var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+footer { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 8px; color: var(--muted); font-size: .85em; }
+@media (max-width: 520px) {
+  ol.prompts li { grid-template-columns: 1fr; gap: 0; }
+  h1 { font-size: 2rem; }
+}
+@media print {
+  @page { size: letter; margin: 9mm 10mm; }
+  :root { --paper: #fff; --ink: #000; --muted: #444; --rule: #bbb; --panel: #eef0f2; color-scheme: light; }
+  body { font-size: 8.6px; }
+  .card { max-width: none; padding: 0; }
+  .cols { grid-template-columns: 1fr 1fr; gap: 10px 18px; margin-top: 10px; }
+  .cols > div { gap: 9px; }
+  h1 { font-size: 22px; } h2 { font-size: 11.5px; margin-bottom: 4px; }
+  .cmd { padding: 3px 7px; margin: 2px 0 4px; }
+  ol.prompts { gap: 2px; } ol.prompts li { padding-bottom: 2px; }
+  td, th { padding: 2px 4px 2px 0; }
+  .tree { font-size: 7.6px; padding: 5px 7px; }
+  section { break-inside: avoid; }
+  h2 .key, .rule, .cmd, .tree, .name b { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  footer { margin-top: 8px; }
+}
+</style>
+
+<main class="card">
+  <header>
+    <h1><span class="tool">mit</span> Field Card</h1>
+    <p>Media Ingest Tool · card offload, verify and logs</p>
+  </header>
+
+  <div class="cols">
+    <div>
+      <section>
+        <h2><span class="key">Start</span> Each morning</h2>
+        <p>Open Terminal and go into the show's folder (the one with <code>project.json</code>). Type <code>cd </code>, drag the folder in from Finder, press Return.</p>
+        <span class="cmd">cd ~/Documents/PARA/Projects/ShowName/ingest</span>
+        <p class="muted">Every <code>mit</code> command after that uses this show's settings. Check where you are with <code>pwd</code>.</p>
+      </section>
+
+      <section>
+        <h2><span class="key">Card</span> Offload a card</h2>
+        <span class="cmd">mit ingest</span>
+        <ol class="prompts">
+          <li><span class="q">Source card path</span><span>drag the card in, e.g. <span class="say">/Volumes/Untitled</span></span></li>
+          <li><span class="q">Destinations</span><span><span class="say">Return</span> for the defaults</span></li>
+          <li><span class="q">Camera ID</span><span>e.g. <span class="say">A</span>, <span class="say">DR1</span></span></li>
+          <li><span class="q">Shoot date [10132026]</span><span><span class="say">Return</span>. If clips cross midnight it asks you to type the shoot day.</span></li>
+          <li><span class="q">Use these for 10/13/2026?</span><span>First card of a day only. <span class="say">Return</span> keeps; <span class="say">n</span> edits each field (Return keeps · type replaces · <span class="say">-</span> removes).</span></li>
+          <li><span class="q">Is this the same card? Recopy it as …</span><span>Only after a failed or interrupted copy. <span class="say">y</span> recopies under the same name.</span></li>
+          <li><span class="q">Card name ABC261013A01</span><span><span class="say">Return</span>; <span class="say">n</span> lets you type a reel number</span></li>
+          <li><span class="q">Media type [VIDEO]</span><span><span class="say">Return</span>. A red box means check before overriding.</span></li>
+          <li><span class="q">Notes for this card</span><span>e.g. "card ejected mid-clip 0032", or <span class="say">Return</span></span></li>
+          <li><span class="q">Start offload?</span><span><span class="say">y</span></span></li>
+        </ol>
+      </section>
+
+      <section>
+        <h2><span class="key">Result</span> What the end means</h2>
+        <table>
+          <tr><td><span class="pass">PASS</span></td><td>Every file verified on every drive. The summary lists each drive's free space.</td></tr>
+          <tr><td><span class="fail">FAIL</span> (red box)</td><td>Don't reuse the card. Run <code>mit ingest</code> again and answer <span class="say">y</span> to recopy it.</td></tr>
+          <tr><td>Interrupted (Ctrl-C, cable)</td><td>Nothing lost. Run <code>mit ingest</code> again; it offers to recopy under the same name.</td></tr>
+          <tr><td><code>warning:</code> lines</td><td>The media is safe; something else (log, report) needs a rerun. The warning names the command.</td></tr>
+        </table>
+      </section>
+
+      <section class="rule">
+        <p><strong>Before a card goes back to camera:</strong> it must show PASS, and the wrap check below must pass on both drives.</p>
+      </section>
+    </div>
+
+    <div>
+      <section>
+        <h2><span class="key">Wrap</span> End of day</h2>
+        <p>Re-check today's cards on each drive (reads every byte again):</p>
+        <span class="cmd">mit verify --drive DRV01A --date 10132026
+mit verify --drive DRV01B --date 10132026</span>
+        <p>Add or change the day's notes, header fields or crew:</p>
+        <span class="cmd">mit daylog 10132026</span>
+        <p class="muted">Proxies, only if post needs them: <code>mit proxies --drive DRV01A --date 10132026</code></p>
+      </section>
+
+      <section>
+        <h2><span class="key">Ship</span> Shuttle drive arrives</h2>
+        <span class="cmd">mit verify --drive DRV01B</span>
+        <p class="muted">Checks every card the drive's log lists. A missing card folder is a FAIL. Exit status 0 = all passed.</p>
+      </section>
+
+      <section>
+        <h2><span class="key">Fix</span> If something's off</h2>
+        <table>
+          <tr><th>You see</th><th>Do</th></tr>
+          <tr><td>"same physical disk"</td><td>Use two separate drives. Partitions of one drive don't count.</td></tr>
+          <tr><td>"Not enough free space"</td><td>Nothing was copied. Swap in a drive with room.</td></tr>
+          <tr><td>"Destinations disagree about … reels"</td><td>Stop. The drives don't match; check for a half-copied card.</td></tr>
+          <tr><td>Master log not updated / damaged</td><td><code>mit log rebuild</code></td></tr>
+          <tr><td>Report or day log needs refreshing</td><td><code>mit report 10132026</code></td></tr>
+          <tr><td>New laptop, project totals gone</td><td><code>mit history rebuild --dest DRV01A --dest DRV02A</code></td></tr>
+          <tr><td>Older card has no ASC MHL</td><td><code>mit mhl --drive DRV01A</code></td></tr>
+          <tr><td>Spreadsheet out of date</td><td><code>mit log export</code></td></tr>
+        </table>
+      </section>
+
+      <section>
+        <h2><span class="key">Name</span> Reading a card name</h2>
+        <div class="name" aria-label="ABC 261013 A 01">
+          <span><b>ABC</b><small>Show</small></span>
+          <span><b>261013</b><small>YYMMDD</small></span>
+          <span><b>A</b><small>Camera</small></span>
+          <span><b>01</b><small>Reel</small></span>
+        </div>
+        <p class="muted">Drone 1, second card: <code>ABC261013DR102</code>. Reels count up per camera per day, across all drives.</p>
+      </section>
+
+      <section>
+        <h2><span class="key">Drive</span> Where things are</h2>
+<pre class="tree">DRV01A/
+├─ 10132026/                 shoot date, MMDDYYYY
+│  ├─ VIDEO/ABC261013A01/    the card, exactly as shot
+│  │     ascmhl/             ASC MHL hash list
+│  │     ABC261013A01_report.html
+│  ├─ AUDIO/  STILLS/        created when needed
+│  └─ PROXIES/ABC261013A01/  only if made
+├─ _REPORTS/10132026/        job reports, daily card log
+├─ _LOGS/                    media_log.sqlite, DRV01A_media_log.xlsx
+└─ _INCOMPLETE/              failed copies moved aside (delete by hand)</pre>
+      </section>
+    </div>
+  </div>
+
+  <footer>The tool never deletes or overwrites media. Full details: README in the tool's folder · github.com/kegurugi/media-ingest-tool (private)</footer>
+</main>
