@@ -8,7 +8,8 @@ from typing import List, Optional
 from . import __version__
 from .errors import IngestError
 from .interactive import (
-    EXIT_ERROR, Prompter, run_daylog, run_history, run_ingest, run_log, run_mhl, run_report, run_verify,
+    EXIT_ERROR, Prompter, run_daylog, run_history, run_ingest, run_log, run_mhl, run_proxies, run_report,
+    run_verify,
 )
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--drive", help="every current card the drive's log lists")
     p.add_argument("--date", help="with --drive: only that shoot date (MMDDYYYY)")
     p.add_argument("--verify", action="store_true", help="re-hash each card before writing its manifest")
+    p = sub.add_parser("proxies", help="make proxies for verified cards (optional; settings in project.json)")
+    p.add_argument("folders", nargs="*", metavar="card_folder", help="card folder(s) on a destination drive")
+    p.add_argument("--drive", help="every current card the drive's log lists")
+    p.add_argument("--date", help="with --drive: only that shoot date (MMDDYYYY)")
+    p.add_argument("--codec", choices=["prores_proxy", "h264"], help="override project.json's proxy codec")
     p = sub.add_parser("report", help="regenerate the card reports and daily card log for a date")
     p.add_argument("date", help="shoot date, MMDDYYYY")
     p.add_argument("--dest", action="append", help="destination volume name or path (default: from project.json)")
@@ -74,7 +80,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.print_help()
         return 2
     runners = {"ingest": run_ingest, "report": run_report, "log": run_log, "history": run_history,
-               "daylog": run_daylog, "verify": run_verify, "mhl": run_mhl}
+               "daylog": run_daylog, "verify": run_verify, "mhl": run_mhl, "proxies": run_proxies}
     try:
         return runners[args.command](args, Prompter())
     except IngestError as e:

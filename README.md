@@ -7,7 +7,7 @@ media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 **Status:** build stages 1–7 of 8 are done: config, naming, verified
 multi-destination copying, clip metadata, the per-card job report, the master
 log with its spreadsheet export and project history, the daily card log, and
-`mit verify`. Phase 2: ASC MHL manifests are done; proxies are next. Sony and
+`mit verify`. Phase 2 is done too: ASC MHL manifests and optional proxies. Sony and
 Canon XML sidecars aren't read yet; that waits for real sample cards.
 
 ## Installation
@@ -288,6 +288,42 @@ folders or `--date`, like `mit verify`.
 against it and fails on any mismatch; it adds a second manifest recording the
 check.) The tests use the reference tool (`pip install ascmhl`, installed with
 `.[dev]`) to confirm the manifests are read and verified correctly.
+
+### Proxies (optional)
+
+Proxies are **off by default**: nothing proxy-related happens unless you ask.
+Make them for verified cards whenever it suits (e.g. at wrap):
+
+```bash
+.venv/bin/mit proxies --drive DRV01A --date 10122026
+```
+
+or set `"auto": true` in `project.json` to make them after every offload:
+
+```json
+"proxies": {"auto": false, "codec": "prores_proxy", "max_width": 1920, "max_height": 1080,
+            "lut": "luts/SLog3_to_709.cube", "lut_gamma": "s-log3"}
+```
+
+- Written to `<DRIVE>/<date>/PROXIES/<CARD>/<clip name>.mov` with the same name
+  as the camera clip, so editing software can relink.
+- ProRes Proxy (default) or H.264 (`"codec": "h264"`, or `--codec h264`). Both
+  are `.mov`, which keeps the timecode track and the reel name (MP4 would drop
+  the reel name). Apple's hardware encoders are used when available.
+- Fit within 1920x1080 by default (never upscaled), all audio tracks, start
+  timecode preserved, reel name = card name.
+- **LUT:** a `.cube` file (path relative to `project.json`) is burned into the
+  proxies and they're tagged Rec.709. Set it per camera (`"lut"`, `"lut_gamma"`
+  in the camera's entry) or as a project default. For Sony clips, if the clip's
+  XML says it was shot in a different gamma from the LUT's `lut_gamma` (e.g.
+  Rec.709 footage and an S-Log3 LUT), the LUT is skipped for that clip and the
+  log says so. A missing or unreadable LUT stops proxies for that card.
+- Made once from a verified copy, then copied to the card's other destinations
+  with hash verification. Existing proxies are never overwritten; running the
+  command again makes only missing ones and copies any that a drive is missing.
+- Only for cards that verified, and only video clips. A failed proxy is a loud
+  warning, not a card failure: the media is still safe. Results are in each
+  drive's master log and on a **Proxies** spreadsheet sheet.
 
 ### Card record
 

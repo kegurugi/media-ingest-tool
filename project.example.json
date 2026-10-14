@@ -7,18 +7,59 @@
     "Leg": 1
   },
   "crew": [
-    {"role": "Producer", "name": "Producer Name"},
-    {"role": "DP", "name": "DP Name"},
-    {"role": "DIT", "name": "DIT Name"}
+    {
+      "role": "Producer",
+      "name": "Producer Name"
+    },
+    {
+      "role": "DP",
+      "name": "DP Name"
+    },
+    {
+      "role": "DIT",
+      "name": "DIT Name"
+    }
   ],
   "cameras": {
-    "A": {"model": "Sony FX6", "media_type": "VIDEO"},
-    "B": {"model": "Canon C80", "media_type": "VIDEO"},
-    "D": {"model": "Timelapse", "description": "Timelapse", "shooter": "Shooter Name", "media_type": "VIDEO"},
-    "DR1": {"model": "Drone 1", "media_type": "VIDEO"},
-    "T": {"model": "Stills", "shooter": "Shooter Name", "media_type": "STILLS"},
-    "S": {"model": "Sound Devices MixPre", "media_type": "AUDIO"}
+    "A": {
+      "model": "Sony FX6",
+      "media_type": "VIDEO"
+    },
+    "B": {
+      "model": "Canon C80",
+      "media_type": "VIDEO"
+    },
+    "D": {
+      "model": "Timelapse",
+      "description": "Timelapse",
+      "shooter": "Shooter Name",
+      "media_type": "VIDEO"
+    },
+    "DR1": {
+      "model": "Drone 1",
+      "media_type": "VIDEO"
+    },
+    "T": {
+      "model": "Stills",
+      "shooter": "Shooter Name",
+      "media_type": "STILLS"
+    },
+    "S": {
+      "model": "Sound Devices MixPre",
+      "media_type": "AUDIO"
+    }
   },
-  "operators": ["DIT Name"],
-  "default_destinations": ["SHOW01_DRV01A", "SHOW01_DRV01B"]
+  "operators": [
+    "DIT Name"
+  ],
+  "default_destinations": [
+    "SHOW01_DRV01A",
+    "SHOW01_DRV01B"
+  ],
+  "proxies": {
+    "auto": false,
+    "codec": "prores_proxy",
+    "max_width": 1920,
+    "max_height": 1080
+  }
 }

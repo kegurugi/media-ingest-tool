@@ -243,7 +243,8 @@ def sony_ltc(value: str) -> Tuple[str, bool]:
 
 
 def read_sony_xml(clip_path: Path) -> Dict[str, str]:
-    """Fields from a clip's Sony NonRealTimeMeta sidecar: created, camera_model, start_timecode.
+    """Fields from a clip's Sony NonRealTimeMeta sidecar: created, camera_model, camera_serial,
+    start_timecode, capture_gamma (e.g. "rec709").
 
     Returns {} if there's no sidecar or it can't be read. Namespaces are ignored.
     """
@@ -273,6 +274,9 @@ def read_sony_xml(clip_path: Path) -> Dict[str, str]:
                 found["camera_model"] = name
             if el.get("serialNo"):
                 found["camera_serial"] = el.get("serialNo").strip()
+        elif tag == "Item" and el.get("name") == "CaptureGammaEquation" and "capture_gamma" not in found:
+            if (el.get("value") or "").strip():
+                found["capture_gamma"] = el.get("value").strip()
         elif tag == "LtcChange" and "start_timecode" not in found and el.get("frameCount") == "0":
             try:
                 found["start_timecode"] = sony_ltc(el.get("value") or "")[0]

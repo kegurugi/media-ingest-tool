@@ -105,6 +105,23 @@ VERIFY_COLUMNS: List[Column] = [
     ("Details", TEXT, lambda r: r["details"]),
 ]
 
+PROXY_COLUMNS: List[Column] = [
+    ("Made", TEXT, lambda r: (r["created_at"] or "").replace("T", " ")),
+    ("Card", TEXT, lambda r: r["card"]),
+    ("Shoot date", TEXT, lambda r: r["shoot_date"]),
+    ("Clip", TEXT, lambda r: r["clip"]),
+    ("Proxy", TEXT, lambda r: r["proxy_path"]),
+    ("Result", TEXT, lambda r: r["result"]),
+    ("Codec", TEXT, lambda r: r["codec"]),
+    ("Resolution", TEXT, lambda r: f"{r['width']}x{r['height']}" if r["width"] else ""),
+    ("Start TC", TEXT, lambda r: r["start_timecode"]),
+    ("LUT", TEXT, lambda r: r["lut"]),
+    ("LUT note", TEXT, lambda r: r["lut_note"]),
+    ("Size (GB)", GB, lambda r: r["size"]),
+    ("xxHash64", TEXT, lambda r: r["xxh64"]),
+    ("Details", TEXT, lambda r: r["detail"]),
+]
+
 ALL_DRIVES_COLUMNS: List[Column] = [
     ("Drive set", TEXT, lambda r: r["drive_set"]),
     ("This drive", TEXT, lambda r: "yes" if r["this_drive"] else ""),
@@ -135,6 +152,9 @@ def export_xlsx(drive: Path, now: Optional[datetime] = None) -> Path:
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'verifications'").fetchone()
         verifications = conn.execute(
             "SELECT * FROM verifications ORDER BY verified_at, id").fetchall() if has_verifications else []
+        has_proxies = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'proxies'").fetchone()
+        proxies = conn.execute("SELECT * FROM proxies ORDER BY created_at, id").fetchall() if has_proxies else []
         summary_updated = conn.execute(
             "SELECT value FROM meta WHERE key = 'project_summary_updated'").fetchone()
         show = conn.execute("SELECT show_code, project_name FROM offloads ORDER BY offload_started DESC LIMIT 1").fetchone()
@@ -151,6 +171,9 @@ def export_xlsx(drive: Path, now: Optional[datetime] = None) -> Path:
            failed=lambda r: r["failed"] > 0, grey=lambda r: False)
     _sheet(wb.create_sheet(), "Verifications", title, VERIFY_COLUMNS, verifications,
            failed=lambda r: r["result"] != "PASS", grey=lambda r: False)
+    if proxies:  # proxies are optional; the sheet only appears once some exist
+        _sheet(wb.create_sheet(), "Proxies", title, PROXY_COLUMNS, proxies,
+               failed=lambda r: r["result"] != "OK", grey=lambda r: False)
     all_drives = wb.create_sheet()
     _sheet(all_drives, "All drives", title, ALL_DRIVES_COLUMNS, project,
            failed=lambda r: (r["failed"] or 0) > 0, grey=lambda r: False)

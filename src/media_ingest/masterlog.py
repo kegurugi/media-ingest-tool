@@ -25,7 +25,7 @@ from .incomplete import INCOMPLETE_DIRNAME
 from .layout import REPORTS_DIRNAME, logs_dir, master_log_path, require_mounted
 from .timecode import end_timecode
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 LOCK_NAME = ".media_log.lock"
 LOCK_TIMEOUT = 60.0
 
@@ -82,6 +82,13 @@ CREATE TABLE verifications (  -- later re-checks of card folders with `mit verif
     files_checked INTEGER, bytes_checked INTEGER, failures INTEGER,
     source TEXT, details TEXT, tool_version TEXT
 );
+CREATE TABLE IF NOT EXISTS proxies (  -- proxies made by `mit proxies` (optional)
+    id INTEGER PRIMARY KEY,
+    card TEXT NOT NULL, shoot_date TEXT, offload_uid TEXT, clip TEXT NOT NULL,
+    proxy_path TEXT, codec TEXT, width INTEGER, height INTEGER, size INTEGER, xxh64 TEXT,
+    start_timecode TEXT, lut TEXT, lut_note TEXT, result TEXT NOT NULL, detail TEXT,
+    created_at TEXT NOT NULL, volume TEXT
+);
 CREATE INDEX files_offload ON files (offload_id);
 CREATE INDEX clips_offload ON clips (offload_id);
 CREATE INDEX offloads_date ON offloads (shoot_date);
@@ -115,6 +122,14 @@ def _upgrade(conn: sqlite3.Connection) -> None:
             verified_at TEXT NOT NULL, result TEXT NOT NULL,
             files_checked INTEGER, bytes_checked INTEGER, failures INTEGER,
             source TEXT, details TEXT, tool_version TEXT)""")
+    if version < 5:
+        conn.execute("""CREATE TABLE IF NOT EXISTS proxies (  -- proxies made by `mit proxies` (optional)
+    id INTEGER PRIMARY KEY,
+    card TEXT NOT NULL, shoot_date TEXT, offload_uid TEXT, clip TEXT NOT NULL,
+    proxy_path TEXT, codec TEXT, width INTEGER, height INTEGER, size INTEGER, xxh64 TEXT,
+    start_timecode TEXT, lut TEXT, lut_note TEXT, result TEXT NOT NULL, detail TEXT,
+    created_at TEXT NOT NULL, volume TEXT
+)""")
     if version < SCHEMA_VERSION:
         conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
 
@@ -227,6 +242,28 @@ def add_verifications(drive: Path, rows: List[Dict[str, Any]], lock_timeout: flo
                        bytes_checked, failures, source, details, tool_version)
                    VALUES (:card, :shoot_date, :offload_uid, :verified_at, :result, :files_checked,
                        :bytes_checked, :failures, :source, :details, :tool_version)""",
+                rows,
+            )
+
+        replace_db(target, build)
+
+
+def add_proxies(drive: Path, rows: List[Dict[str, Any]], lock_timeout: float = LOCK_TIMEOUT) -> None:
+    """Record proxy results in the drive's log."""
+    drive = require_mounted(drive)
+    target = master_log_path(drive)
+    with _locked(drive, lock_timeout):
+        if not target.exists() or not is_healthy(target):
+            raise LogError(f"No healthy master log on {drive} to record proxies in")
+
+        def build(conn: sqlite3.Connection) -> None:
+            copy_into(target, conn)
+            _upgrade(conn)
+            conn.executemany(
+                """INSERT INTO proxies (card, shoot_date, offload_uid, clip, proxy_path, codec, width, height, size,
+                       xxh64, start_timecode, lut, lut_note, result, detail, created_at, volume)
+                   VALUES (:card, :shoot_date, :offload_uid, :clip, :proxy_path, :codec, :width, :height, :size,
+                       :xxh64, :start_timecode, :lut, :lut_note, :result, :detail, :created_at, :volume)""",
                 rows,
             )
 

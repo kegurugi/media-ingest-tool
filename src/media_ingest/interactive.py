@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, List, Optional, TextIO
 
-from . import daily_log, history, masterlog, spotcheck
+from . import daily_log, history, masterlog, proxies, spotcheck
 from .daydetails import DayDetails, carried_forward, project_days_dir, read_day, write_day
 from .config import MEDIA_TYPES, load_config
 from .errors import ConfigError, IngestError, NamingError
@@ -271,6 +271,9 @@ def run_ingest(args, p: Prompter) -> int:
         return EXIT_INTERRUPTED
     progress.finish()
     _print_summary(p, result)
+    if result.passed and cfg.proxies.auto:
+        p.say("\nMaking proxies (proxies.auto is on in project.json) ...")
+        _proxies_for(p, result.drives[0], card, cfg, result.drives[1:])
     return EXIT_PASS if result.passed else EXIT_FAIL
 
 
@@ -551,6 +554,58 @@ def _card_targets(args, p: Prompter):
             drive, card, _ = spotcheck.locate_card(Path(folder))
             targets.append((Path(folder).expanduser(), drive, card))
     return targets
+
+
+def run_proxies(args, p: Prompter) -> int:
+    """`mit proxies`: make proxies for verified cards (optional; see project.json "proxies")."""
+    cfg = load_config(args.config)
+    if args.codec:
+        from dataclasses import replace
+        cfg.proxies = replace(cfg.proxies, codec=args.codec)
+    targets = _card_targets(args, p)
+    problems = 0
+    for i, (folder, drive, card) in enumerate(targets, 1):
+        p.say(f"\n[{i}/{len(targets)}] {card}")
+        if not _proxies_for(p, drive, card, cfg, None):
+            problems += 1
+    return EXIT_FAIL if problems else EXIT_PASS
+
+
+def _proxies_for(p: Prompter, drive: Path, card: CardName, cfg, others) -> bool:
+    progress = _ProgressPrinter(p.err)
+    try:
+        out = proxies.run_for_card(drive, card, cfg, others, progress=progress)
+    except KeyboardInterrupt:
+        progress.finish()
+        p.warn_loud(["Proxies INTERRUPTED. The card itself is safe.",
+                     f"Run `mit proxies` on {card} again to finish (existing proxies are kept)."])
+        raise
+    except IngestError as e:
+        progress.finish()
+        p.say(f"  proxies not made: {e}")
+        return False
+    progress.finish()
+    if out.problem:
+        p.say(f"  proxies not made: {out.problem}")
+        return False
+    for r in out.results:
+        name = Path(r.clip).name
+        if r.status == proxies.OK:
+            p.say(f"  OK       {name} -> {r.proxy.name}  {r.width}x{r.height} {r.codec}"
+                  + (f"  LUT {r.lut}" if r.lut else "") + (f"  ({r.lut_note})" if r.lut_note else ""))
+        elif r.status == proxies.SKIPPED:
+            p.say(f"  skipped  {name} ({r.detail})")
+        else:
+            p.say(f"  FAILED   {name}: {r.detail}")
+    if out.copied_to:
+        p.say(f"  Copied and verified on: {', '.join(out.copied_to)}")
+    for w in out.warnings:
+        p.say(f"  warning: {w}")
+    p.say(f"  Proxies: {proxies.proxy_dir(drive, card)}  ({_hms(out.elapsed)})")
+    if not out.ok:
+        p.warn_loud([f"Some proxies for {card} FAILED. The card itself is verified and safe.",
+                     "Run `mit proxies` on it again to retry the failed ones."])
+    return out.ok
 
 
 def run_mhl(args, p: Prompter) -> int:

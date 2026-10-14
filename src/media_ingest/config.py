@@ -9,7 +9,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .errors import ConfigError
 from .fileutil import atomic_write_text
@@ -19,7 +19,10 @@ MEDIA_TYPES = ("VIDEO", "AUDIO", "STILLS")
 SHOW_CODE_RE = re.compile(r"^[A-Z]{3}$")
 CAMERA_ID_RE = re.compile(r"^[A-Z0-9]{1,3}$")
 
+PROXY_CODECS = ("prores_proxy", "h264")
+
 _TOP_LEVEL_KEYS = {
+    "proxies",
     "show_code",
     "project_name",
     "cameras",
@@ -28,7 +31,8 @@ _TOP_LEVEL_KEYS = {
     "header_fields",
     "crew",
 }
-_CAMERA_KEYS = {"model", "description", "shooter", "media_type"}
+_CAMERA_KEYS = {"model", "description", "shooter", "media_type", "lut", "lut_gamma"}
+_PROXY_KEYS = {"auto", "codec", "max_width", "max_height", "lut", "lut_gamma"}
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,21 @@ class Camera:
     # Expected media type. Used when a card holds no video (e.g. a timelapse
     # camera configured as VIDEO), and to warn about likely wrong-camera picks.
     media_type: Optional[str] = None
+    # Proxy LUT for this camera (.cube, relative to project.json) and the capture gamma it's
+    # for (e.g. "s-log3"); Sony clips shot in another gamma don't get it.
+    lut: Optional[str] = None
+    lut_gamma: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ProxySettings:
+    """Proxies are optional: they're only made by `mit proxies`, or after each offload if auto is on."""
+    auto: bool = False
+    codec: str = "prores_proxy"  # or "h264" (both written as .mov, which keeps timecode and reel name)
+    max_width: int = 1920
+    max_height: int = 1080
+    lut: Optional[str] = None  # default LUT for cameras without their own
+    lut_gamma: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +76,19 @@ class ProjectConfig:
     default_destinations: List[str] = field(default_factory=list)
     header_fields: Dict[str, str] = field(default_factory=dict)
     crew: List[CrewMember] = field(default_factory=list)
+    proxies: ProxySettings = field(default_factory=ProxySettings)
+    base_dir: Optional[Path] = field(default=None, compare=False)  # folder of project.json; LUT paths are relative to it
+
+    def lut_for(self, cam_id: str) -> Tuple[Optional[Path], Optional[str]]:
+        """(LUT file, gamma it's for) for a camera's proxies, or (None, None)."""
+        cam = self.cameras.get(cam_id.upper())
+        lut, gamma = (cam.lut, cam.lut_gamma) if cam and cam.lut else (self.proxies.lut, self.proxies.lut_gamma)
+        if not lut:
+            return None, None
+        path = Path(lut).expanduser()
+        if not path.is_absolute() and self.base_dir is not None:
+            path = self.base_dir / path
+        return path, gamma
 
     def camera(self, cam_id: str) -> Camera:
         try:
@@ -79,9 +111,11 @@ def load_config(path: Union[str, Path]) -> ProjectConfig:
     except json.JSONDecodeError as e:
         raise ConfigError(f"{path}: invalid JSON at line {e.lineno}, column {e.colno}: {e.msg}") from None
     try:
-        return config_from_dict(data)
+        config = config_from_dict(data)
     except ConfigError as e:
         raise ConfigError(f"{path}: {e}") from None
+    config.base_dir = path.resolve().parent
+    return config
 
 
 def save_config(config: ProjectConfig, path: Union[str, Path]) -> None:
@@ -113,6 +147,7 @@ def config_from_dict(data: Any) -> ProjectConfig:
             errors.append(f"default_destinations: {name!r} is not a valid volume name")
     header_fields = _parse_header_fields(data.get("header_fields", {}), errors)
     crew = _parse_crew(data.get("crew", []), errors)
+    proxies = _parse_proxies(data.get("proxies", {}), errors)
 
     if errors:
         raise ConfigError("invalid project config:\n  - " + "\n  - ".join(errors))
@@ -125,6 +160,7 @@ def config_from_dict(data: Any) -> ProjectConfig:
         default_destinations=destinations,
         header_fields=header_fields,
         crew=crew,
+        proxies=proxies,
     )
 
 
@@ -138,6 +174,10 @@ def config_to_dict(config: ProjectConfig) -> Dict[str, Any]:
             entry["shooter"] = cam.shooter
         if cam.media_type:
             entry["media_type"] = cam.media_type
+        if cam.lut:
+            entry["lut"] = cam.lut
+        if cam.lut_gamma:
+            entry["lut_gamma"] = cam.lut_gamma
         cameras[cam.id] = entry
     return {
         "show_code": config.show_code,
@@ -147,6 +187,8 @@ def config_to_dict(config: ProjectConfig) -> Dict[str, Any]:
         "cameras": cameras,
         "operators": list(config.operators),
         "default_destinations": list(config.default_destinations),
+        **({"proxies": {k: v for k, v in config.proxies.__dict__.items() if v is not None}}
+           if config.proxies != ProxySettings() else {}),
     }
 
 
@@ -185,6 +227,12 @@ def _parse_cameras(raw: Any, errors: List[str]) -> Dict[str, Camera]:
             errors.append(f"{where}: model is required")
             continue
         optional = {}
+        for key in ("lut", "lut_gamma"):
+            value = spec.get(key)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                errors.append(f"{where}: {key} must be a non-empty string")
+            elif value is not None:
+                optional[key] = value.strip()
         for key in ("description", "shooter"):
             value = spec.get(key, "")
             if not isinstance(value, str):
@@ -199,6 +247,39 @@ def _parse_cameras(raw: Any, errors: List[str]) -> Dict[str, Camera]:
                 media_type = None
         cameras[cam_id] = Camera(id=cam_id, model=model.strip(), media_type=media_type, **optional)
     return cameras
+
+
+def _parse_proxies(raw: Any, errors: List[str]) -> ProxySettings:
+    if not isinstance(raw, dict):
+        errors.append("proxies must be an object")
+        return ProxySettings()
+    unknown = sorted(set(raw) - _PROXY_KEYS)
+    if unknown:
+        errors.append(f"proxies: unknown key(s): {', '.join(unknown)}")
+    values: Dict[str, Any] = {}
+    if "auto" in raw:
+        if not isinstance(raw["auto"], bool):
+            errors.append("proxies.auto must be true or false")
+        else:
+            values["auto"] = raw["auto"]
+    if "codec" in raw:
+        if raw["codec"] not in PROXY_CODECS:
+            errors.append(f"proxies.codec must be one of {', '.join(PROXY_CODECS)}")
+        else:
+            values["codec"] = raw["codec"]
+    for key in ("max_width", "max_height"):
+        if key in raw:
+            if isinstance(raw[key], bool) or not isinstance(raw[key], int) or raw[key] < 16 or raw[key] % 2:
+                errors.append(f"proxies.{key} must be an even whole number of pixels")
+            else:
+                values[key] = raw[key]
+    for key in ("lut", "lut_gamma"):
+        if key in raw:
+            if not isinstance(raw[key], str) or not raw[key].strip():
+                errors.append(f"proxies.{key} must be a non-empty string")
+            else:
+                values[key] = raw[key].strip()
+    return ProxySettings(**values)
 
 
 def _parse_str_list(raw: Any, key: str, errors: List[str], required: bool) -> List[str]:
