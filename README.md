@@ -301,9 +301,11 @@ Make them for verified cards whenever it suits (e.g. at wrap):
 or set `"auto": true` in `project.json` to make them after every offload:
 
 ```json
-"proxies": {"auto": false, "codec": "prores_proxy", "max_width": 1920, "max_height": 1080,
-            "lut": "luts/SLog3_to_709.cube", "lut_gamma": "s-log3"}
+"proxies": {"auto": false, "codec": "prores_proxy", "max_width": 1920, "max_height": 1080}
 ```
+
+`--clip NAME` (repeatable) makes proxies for just those clips, e.g.
+`--clip A002C002_261005U6`.
 
 - Written to `<DRIVE>/<date>/PROXIES/<CARD>/<clip name>.mov` with the same name
   as the camera clip, so editing software can relink.
@@ -314,16 +316,51 @@ or set `"auto": true` in `project.json` to make them after every offload:
   timecode preserved, reel name = card name.
 - **LUT:** a `.cube` file (path relative to `project.json`) is burned into the
   proxies and they're tagged Rec.709. Set it per camera (`"lut"`, `"lut_gamma"`
-  in the camera's entry) or as a project default. For Sony clips, if the clip's
-  XML says it was shot in a different gamma from the LUT's `lut_gamma` (e.g.
-  Rec.709 footage and an S-Log3 LUT), the LUT is skipped for that clip and the
-  log says so. A missing or unreadable LUT stops proxies for that card.
+  in the camera's entry) or as a project default (`"lut"`, `"lut_gamma"` in
+  `"proxies"`). See *LUTs for Sony S-Log3* below. A missing or unreadable LUT
+  stops proxies for that card.
 - Made once from a verified copy, then copied to the card's other destinations
   with hash verification. Existing proxies are never overwritten; running the
   command again makes only missing ones and copies any that a drive is missing.
 - Only for cards that verified, and only video clips. A failed proxy is a loud
   warning, not a card failure: the media is still safe. Results are in each
   drive's master log and on a **Proxies** spreadsheet sheet.
+
+#### LUTs for Sony S-Log3
+
+Sony cameras record each clip's capture gamma in its XML sidecar, and the tool
+only applies a LUT to clips shot in the gamma the LUT is for (`lut_gamma`). The
+Sony FX6 writes:
+
+| Shot in | `CaptureGammaEquation` in the clip's XML | Colour primaries |
+|---|---|---|
+| Rec.709 | `rec709` | `rec709` |
+| S-Log3 / S-Gamut3.Cine | `s-log3-cine` | `s-gamut3-cine` |
+
+So for an FX6 shooting S-Log3/S-Gamut3.Cine with Sony's s709 LUT:
+
+```json
+"cameras": {
+  "A": {"model": "Sony FX6", "media_type": "VIDEO",
+        "lut": "luts/SL3SG3Ctos709.cube", "lut_gamma": "s-log3-cine"}
+}
+```
+
+- Use the LUT that matches the gamut: `SL3SG3Ctos709.cube` is for
+  **S-Gamut3.Cine** (`s-log3-cine`); `SL3SG3tos709.cube` is for plain
+  **S-Gamut3**. With `"lut_gamma": "s-log3-cine"`, the S-Gamut3.Cine LUT is
+  never put on clips from another gamut.
+- `"lut_gamma": "s-log3"` matches any S-Log3 clip, including `s-log3-cine`.
+  Use it only with a LUT that suits every S-Log3 gamut you shoot.
+- Clips in another gamma (e.g. `rec709`) get no LUT. The proxy log and the
+  Proxies sheet say *"clip is rec709, LUT is for s-log3-cine: LUT not applied"*,
+  so a card mixing Rec.709 and S-Log3 clips gets the right proxies.
+- Clips with no Sony XML (other cameras, or a missing sidecar) get the
+  camera's LUT, noted as *"clip's gamma unknown"*. Give those cameras their own
+  `lut` (or none).
+- Tested on a real FX6 card with one Rec.709 and one S-Log3 clip of the same
+  scene: the S-Log3 proxy came out matching the Rec.709 clip's contrast and
+  colour, and the Rec.709 proxy was left untouched.
 
 ### Card record
 
