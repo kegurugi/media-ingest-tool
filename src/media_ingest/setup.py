@@ -207,9 +207,10 @@ def _walk(p, base: Dict[str, Any], folder: Path, source_dir: Optional[Path], arg
     p.say("\nProxies (optional; off means none are ever made unless you run `mit proxies`)")
     proxies["auto"] = _yes(p, "  Make proxies automatically after every offload?", bool(proxies.get("auto", False)))
     while True:
-        codec = _ask(p, "  Proxy codec (prores_proxy or h264)", proxies.get("codec", "prores_proxy"))
+        codec = _ask(p, "  Proxy codec (prores_proxy or h264)", proxies.get("codec", "prores_proxy")).lower()
         if codec in PROXY_CODECS:
             break
+        p.say("  Type prores_proxy or h264, or press Return to keep the one shown")
     proxies["codec"] = codec
     data["proxies"] = proxies
     _bring_luts(data, folder, source_dir, data["_lut_copies"])
@@ -245,11 +246,12 @@ def _cameras(p, current: Dict[str, Any], folder: Path, source_dir: Optional[Path
     for cam_id, spec in current.items():
         cams[str(cam_id).upper()] = {"model": spec} if isinstance(spec, str) else dict(spec)
     p.say("\nCameras")
-    p.say("  Quick picks for the model: " + "  ".join(f"{n}) {m}" for n, (m, _, _) in enumerate(CAMERA_PRESETS, 1)))
+    p.say("  Each camera has an ID, the letter or code in its card names (A, B, DR1 for drone 1, S for sound),")
+    p.say("  and a model (e.g. Sony FX6).")
     while True:
         if cams:
-            p.say("  " + "   ".join(f"{i}: {_camera_label(c)}" for i, c in cams.items()))
-        answer = _ask(p, "  Camera ID to add or change ('-ID' removes, Return when done)").upper()
+            p.say("  So far: " + "   ".join(f"{i} = {_camera_label(c)}" for i, c in cams.items()))
+        answer = _ask(p, "  Camera ID to add or change, e.g. A ('-A' removes it; Return when done)").upper()
         if not answer:
             if cams:
                 return cams
@@ -262,20 +264,29 @@ def _cameras(p, current: Dict[str, Any], folder: Path, source_dir: Optional[Path
         if not CAMERA_ID_RE.match(answer):
             p.say("  A camera ID is 1-3 letters or digits, e.g. A, B, DR1, S")
             continue
+        if answer.isdigit() and answer not in cams and not _yes(
+                p, f"  Camera IDs are usually letters (A, B, DR1). Use {answer} as this camera's ID?", False):
+            continue
         cams[answer] = _camera(p, answer, cams.get(answer, {}), folder, source_dir, lut_copies, args)
 
 
 def _camera(p, cam_id: str, cam: Dict[str, Any], folder: Path, source_dir, lut_copies, args) -> Dict[str, Any]:
     preset = None
+    p.say("  Models: " + "  ".join(f"{n}) {m}" for n, (m, _, _) in enumerate(CAMERA_PRESETS, 1)))
     while True:
-        answer = _ask(p, f"  Camera {cam_id} model (number or name)", cam.get("model", ""))
+        answer = _ask(p, f"  Camera {cam_id} model (a number above, or type the model)", cam.get("model", ""))
         if answer.isdigit() and 1 <= int(answer) <= len(CAMERA_PRESETS):
             preset = CAMERA_PRESETS[int(answer) - 1]
             answer = preset[0]
         else:
             preset = next((pr for pr in CAMERA_PRESETS if pr[0].lower() == answer.lower()), None)
-        if answer:
-            break
+        if not answer:
+            continue
+        if (answer != cam.get("model") and preset is None and len(answer) <= 3
+                and CAMERA_ID_RE.match(answer.upper()) and not _yes(
+                    p, f"  '{answer}' looks like a camera ID, not a model. Use it as the model anyway?", False)):
+            continue
+        break
     out: Dict[str, Any] = {"model": answer}
     for key, label in (("description", "Description (optional, e.g. Timelapse, Gimbal)"),
                        ("shooter", "Shooter (optional)")):

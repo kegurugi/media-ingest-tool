@@ -85,7 +85,7 @@ def test_new_show(tmp_path, monkeypatch, capsys, luts):
     config = load_config(folder / "project.json")
     assert config.lut_for("A") == (folder / "luts/SL3SG3Ctos709.cube", "s-log3-cine")
     assert "LUT SL3SG3Ctos709.cube for s-log3-cine [ok]" in out
-    assert sum("Quick picks" in line for line in out.splitlines()) == 1
+    assert "the letter or code in its card names" in out
     assert not any("gamma" in p for p in prompts if "Camera S" in p)
 
 
@@ -184,3 +184,23 @@ def test_mit_config(tmp_path, monkeypatch, capsys, luts):
 ])
 def test_clean_path(raw, clean):
     assert clean_path(raw) == clean
+
+
+def test_mixed_up_id_and_model_are_caught(tmp_path, monkeypatch, capsys):
+    """From the first real run: the model list was read as IDs, giving camera 1 with model A."""
+    folder = tmp_path / "show"
+    answers = ["ABC", "Show"] + [""] * 8 + ["Me",
+               "1", "n",            # "1" as an ID: not confirmed
+               "A", "A", "n",       # "A" as the model: not confirmed
+               "1",                 # model: quick pick 1 = Sony FX6
+               "", "", "", "-", "",
+               "", "", "n", "",     # drives; proxies: no; codec 'n' is explained, then Return keeps it
+               ""]
+    code, out, prompts = run(monkeypatch, capsys, ["init", str(folder)], answers)
+    assert code == 0, out
+    assert any("Camera IDs are usually letters" in p for p in prompts)
+    assert any("looks like a camera ID, not a model" in p for p in prompts)
+    assert "Type prores_proxy or h264" in out
+    data = json.loads((folder / "project.json").read_text())
+    assert data["cameras"] == {"A": {"model": "Sony FX6", "media_type": "VIDEO"}}
+    assert data["proxies"]["codec"] == "prores_proxy"
