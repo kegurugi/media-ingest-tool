@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import sqlite3
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import __version__, daily_log, diskio, history, masterlog, mhl, xlsx_export
 from .daydetails import PROJECT_DAYS_DIRNAME
@@ -93,6 +94,7 @@ class OffloadResult:
     verify_seconds: Optional[float] = None  # re-reading every destination
     finished_at: Optional[datetime] = None
     disk_ids: Dict[Path, DiskIdentity] = field(default_factory=dict)
+    space_after: Dict[Path, Tuple[int, int]] = field(default_factory=dict)  # drive -> (free, capacity) bytes
     drive_check: str = ""  # how the separate-drives rule was checked, for the record and report
 
     @property
@@ -308,6 +310,12 @@ def _finish(result: OffloadResult, job: Optional[JobInfo], copy_all: bool, t0: f
     """Write the card record and job reports on every destination."""
     result.finished_at = datetime.now()
     result.elapsed = time.monotonic() - t0
+    for d in result.drives:  # space left once this card is on the drive
+        try:
+            usage = shutil.disk_usage(d)
+            result.space_after[d] = (usage.free, usage.total)
+        except OSError:
+            pass
     for d in result.drives:
         path = card_record_path(d, result.card)
         try:
@@ -400,6 +408,8 @@ def _card_record(result: OffloadResult, copy_all: bool, job: Optional[JobInfo] =
                 "result": "PASS" if v is not None and v.ok and not result.errors else "FAIL",
                 "physical_disk": (result.disk_ids[drive].description or "unknown") if drive in result.disk_ids else "",
                 "ascmhl": next((str(p.relative_to(card_dir)) for p in result.mhl_paths if card_dir in p.parents), ""),
+                "free_after": result.space_after.get(drive, (None, None))[0],
+                "capacity": result.space_after.get(drive, (None, None))[1],
                 "missing_dirs": v.missing_dirs if v else [],
                 "extra_files": v.extra_files if v else [],
                 "ignored_macos_files": len(v.ignored_files) if v else 0,

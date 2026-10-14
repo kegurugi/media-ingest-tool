@@ -113,3 +113,18 @@ def test_export_replaces_atomically(sample_card, drives, monkeypatch):
         export_xlsx(drives[0])
     assert path.read_bytes() == before
     assert not [p for p in path.parent.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_free_space_after_each_card(sample_card, drives):
+    import shutil as _shutil
+    from media_ingest.records import read_card_record
+    r = offload_card(sample_card, drives, "ABC261012A01")
+    free, total = r.space_after[drives[0]]
+    assert 0 < free <= total == _shutil.disk_usage(drives[0]).total
+    record = read_card_record(drives[0] / "_REPORTS/10122026/ABC261012A01_card.json")
+    assert record["destinations"][0]["free_after"] == free and record["destinations"][0]["capacity"] == total
+    ws = load_workbook(drives[0] / "_LOGS/SHOW01_DRV01A_media_log.xlsx")["Cards"]
+    row = {h: c for h, c in zip(header(ws), ws[3])}
+    assert row["Free on drive after (GB)"].value == pytest.approx(free / 1e9, abs=1e-5)
+    assert row["Free on drive after (GB)"].number_format == "0.00"
+    assert row["Drive capacity (GB)"].value == pytest.approx(total / 1e9, abs=1e-5)

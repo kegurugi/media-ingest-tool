@@ -73,6 +73,8 @@ CARD_COLUMNS: List[Column] = [
     ("Duration", DURATION, lambda r: r["total_duration"]),
     ("Offload started", TEXT, lambda r: (r["offload_started"] or "").replace("T", " ")),
     ("Offload finished", TEXT, lambda r: (r["offload_finished"] or "").replace("T", " ")),
+    ("Free on drive after (GB)", GB, lambda r: r["free_after"]),
+    ("Drive capacity (GB)", GB, lambda r: r["capacity"]),
     ("Operator", TEXT, lambda r: r["operator"]),
     ("Source volume", TEXT, lambda r: r["source_volume"]),
     ("Destinations", TEXT, lambda r: r["destinations"]),

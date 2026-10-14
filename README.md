@@ -125,7 +125,8 @@ attempt is marked superseded and left out of totals.
 
 After every offload, `_LOGS/[DRIVE]_media_log.xlsx` is regenerated from the
 log. It has **Clips**, **Cards** and **Days** sheets (Days has the running total
-on the drive). It's a read-only view: edits made in it are never read back.
+on the drive; Cards records each drive's free space and capacity once that card
+was on it). It's a read-only view: edits made in it are never read back.
 Card names, reels, timecodes, checksums and dates are text cells; GB has two
 decimals; durations are `HH:MM:SS`; failures are red; superseded attempts are
 grey.

@@ -724,6 +724,9 @@ def _print_summary(p: Prompter, r: OffloadResult) -> None:
         *([f"Verify:   {_hms(r.verify_seconds)}  (every destination re-read)"] if r.verify_seconds is not None else []),
         f"Total:    {_hms(r.elapsed)}",
     ]
+    for drive, (free, total) in r.space_after.items():
+        lines.append(f"Free:     {drive.name}  {format_bytes(free)} of {format_bytes(total)} "
+                     f"({100 * free / total:.0f}% free)" if total else f"Free:     {drive.name}  {format_bytes(free)}")
     lines += [f"Report:   {path}" for path in r.reports if "_REPORTS" in path.parts]
     lines += [f"Day log:  {path}" for path in r.daily_logs]
     if r.mhl_paths:

@@ -25,7 +25,7 @@ from .incomplete import INCOMPLETE_DIRNAME
 from .layout import REPORTS_DIRNAME, logs_dir, master_log_path, require_mounted
 from .timecode import end_timecode
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 LOCK_NAME = ".media_log.lock"
 LOCK_TIMEOUT = 60.0
 
@@ -51,6 +51,7 @@ CREATE TABLE offloads (
     drive_result TEXT NOT NULL,   -- PASS/FAIL on this drive
     file_count INTEGER, clip_count INTEGER, total_bytes INTEGER, total_duration REAL,
     elapsed_seconds REAL, transfer_speed REAL,
+    free_after INTEGER, capacity INTEGER,  -- this drive's free space and size once the card was on it
     notes TEXT, errors TEXT, card_path TEXT, tool_version TEXT,
     superseded INTEGER NOT NULL DEFAULT 0
 );
@@ -130,6 +131,11 @@ def _upgrade(conn: sqlite3.Connection) -> None:
     start_timecode TEXT, lut TEXT, lut_note TEXT, result TEXT NOT NULL, detail TEXT,
     created_at TEXT NOT NULL, volume TEXT
 )""")
+    if version < 6:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(offloads)")}
+        for column in ("free_after", "capacity"):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE offloads ADD COLUMN {column} INTEGER")
     if version < SCHEMA_VERSION:
         conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
 
@@ -309,8 +315,9 @@ def _insert(conn: sqlite3.Connection, record: Dict[str, Any], volume: str) -> bo
         """INSERT INTO offloads (offload_uid, card, shoot_date, camera_id, camera_model, camera_description, camera_shooter,
                media_type, reel, project_name, show_code, offload_started, offload_finished, operator,
                source_volume, destinations, volume, result, drive_result, file_count, clip_count, total_bytes,
-               total_duration, elapsed_seconds, transfer_speed, notes, errors, card_path, tool_version)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               total_duration, elapsed_seconds, transfer_speed, notes, errors, card_path, tool_version,
+               free_after, capacity)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             uid, card, record.get("shoot_date", ""), camera.get("id") or card[9:-2], camera.get("model", ""),
             camera.get("description", ""), camera.get("shooter", ""), record.get("media_type", ""), card[-2:],
@@ -321,6 +328,7 @@ def _insert(conn: sqlite3.Connection, record: Dict[str, Any], volume: str) -> bo
             len(clips), record.get("total_bytes"), sum(durations) if durations else None,
             record.get("elapsed_seconds"), record.get("transfer_speed"), record.get("notes", ""),
             "; ".join(record.get("errors", [])), (dest or {}).get("card_path", ""), record.get("tool_version", ""),
+            (dest or {}).get("free_after"), (dest or {}).get("capacity"),
         ),
     )
     offload_id = cur.lastrowid
