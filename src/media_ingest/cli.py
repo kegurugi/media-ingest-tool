@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from . import __version__
 from .errors import IngestError
+from .setup import run_config, run_init
 from .interactive import (
     EXIT_ERROR, Prompter, run_daylog, run_history, run_ingest, run_log, run_mhl, run_proxies, run_report,
     run_verify,
@@ -20,6 +21,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default="project.json", help="project config file (default: project.json)")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
+    p = sub.add_parser("init", help="set up a new show's project.json (or edit an existing one)")
+    p.add_argument("folder", nargs="?", default=".", help="the show's folder (default: the current folder)")
+    p.add_argument("--from", dest="from_project", metavar="PATH",
+                   help="start from an earlier show's project.json (or its folder)")
+    p.add_argument("--luts", metavar="FOLDER", help="also look for .cube LUTs in this folder")
+    sub.add_parser("config", help="check project.json and print a summary")
     p = sub.add_parser("ingest", help="interactive card offload")
     p.add_argument("--source", help="source card path, e.g. /Volumes/A001")
     p.add_argument("--dest", action="append", help="destination volume name or path (repeat for each)")
@@ -81,7 +88,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.print_help()
         return 2
     runners = {"ingest": run_ingest, "report": run_report, "log": run_log, "history": run_history,
-               "daylog": run_daylog, "verify": run_verify, "mhl": run_mhl, "proxies": run_proxies}
+               "daylog": run_daylog, "verify": run_verify, "mhl": run_mhl, "proxies": run_proxies,
+               "init": run_init, "config": run_config}
     try:
         return runners[args.command](args, Prompter())
     except IngestError as e:

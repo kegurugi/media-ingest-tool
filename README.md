@@ -48,6 +48,37 @@ ln -s "$PWD/.venv/bin/mit" /opt/homebrew/bin/mit
 The link points into this folder, so if you move the tool's folder, remove the
 old link (`rm /opt/homebrew/bin/mit`) and make it again.
 
+**Setting up a show:** `mit init` walks you through creating a show's
+`project.json`, with defaults throughout so Return moves things along:
+
+```bash
+mit init ~/Documents/PARA/Projects/ShowName/ingest
+```
+
+It asks for the show code and name, header fields (suggesting Season,
+Location, Leg), crew (suggesting Producer, DP, DIT), operators, cameras (quick
+picks for common models fill in the media type), a proxy LUT per camera, the
+default drives (listing the ones connected) and proxy settings. Then it shows a
+summary, checks everything, and saves.
+
+- **LUTs:** pick one it found (in the show folder, the current folder, or
+  `--luts FOLDER`) or drag a `.cube` file into Terminal. It's copied into the
+  show's `luts/` folder, so the show folder is self-contained. For Sony cameras
+  it suggests the gamma from the LUT's name (`s-log3-cine` for S-Gamut3.Cine).
+- **A new season:** `mit init NEW_FOLDER --from OLD_FOLDER` starts from an
+  earlier show's settings and brings its LUTs along; usually you only change
+  the show code and location.
+- **Changing a show:** run `mit init` in a folder that already has a
+  `project.json` to edit it, with the current values as defaults. The old file
+  is kept as `project.json.previous`.
+
+Check a show's settings at any time (it also confirms the LUT files are there
+and which drives are connected):
+
+```bash
+mit config
+```
+
 **Day-to-day:** keep each show's `project.json` in its own folder (with its
 `luts/`; the project history and day details are kept there too), `cd` into
 it, and run `mit` there. `project.json` in the current folder is used
