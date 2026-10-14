@@ -55,8 +55,26 @@ card name, the media type and the target paths before anything is copied.
 The **shoot date** is proposed from the earliest clip date on the card (read
 with exiftool, without changing the card). If the clips fall on more than one
 date, there's a loud warning and you must type the date; no default is
-offered. If no clip has a date, you're asked to type it. Exit status: `0` PASS, `1` FAIL or cancelled, `2` error before
-copying, `130` interrupted.
+offered. If no clip has a date, you're asked to type it.
+
+When the offload finishes, a summary shows the result, the copy and verify
+times, and **each destination's free space** now that the card is on it:
+
+```
+  PASS  TST261013A01  (VIDEO)
+  Files:    11
+  Size:     2.13 GB
+  Copy:     00:00:06  (382.60 MB/s)
+  Verify:   00:00:02  (every destination re-read)
+  Total:    00:00:11
+  Free:     1T_WD_BLK01  740.19 GB of 1.00 TB (74% free)
+  Free:     WD_BLACK  346.32 GB of 1.00 TB (35% free)
+  Report:   /Volumes/1T_WD_BLK01/_REPORTS/10132026/TST261013A01_report.html
+  ...
+```
+
+Exit status: `0` PASS, `1` FAIL or cancelled, `2` error before copying, `130`
+interrupted.
 
 ### What gets copied
 
@@ -125,8 +143,11 @@ attempt is marked superseded and left out of totals.
 
 After every offload, `_LOGS/[DRIVE]_media_log.xlsx` is regenerated from the
 log. It has **Clips**, **Cards** and **Days** sheets (Days has the running total
-on the drive; Cards records each drive's free space and capacity once that card
-was on it). It's a read-only view: edits made in it are never read back.
+on the drive). The Cards sheet also has **Free on drive after (GB)** and **Drive
+capacity (GB)**: that drive's free space once each card was on it, so reading
+down the column shows how fast the drive is filling. Cards offloaded before
+this was recorded show these blank. It's a read-only view: edits made in it are
+never read back.
 Card names, reels, timecodes, checksums and dates are text cells; GB has two
 decimals; durations are `HH:MM:SS`; failures are red; superseded attempts are
 grey.
@@ -192,7 +213,8 @@ log. It's rebuilt on every destination after each offload for that date, by
   Name)*, with each card listed under it;
 - totals: cards and GB for the day, the running total on each drive and the
   project total across all drives (both up to and including that date), and
-  each drive's capacity and free space;
+  each drive's capacity and free space (measured when the page is built; the
+  column header says when);
 - camera notes (each card's notes) and day notes.
 
 If the destinations disagree on any total, or one isn't connected, the page
@@ -363,12 +385,26 @@ So for an FX6 shooting S-Log3/S-Gamut3.Cine with Sony's s709 LUT:
   scene: the S-Log3 proxy came out matching the Rec.709 clip's contrast and
   colour, and the Rec.709 proxy was left untouched.
 
+### Checking free space
+
+| Where | What it shows |
+|---|---|
+| End-of-offload summary | Each destination's free space and capacity, right after the card |
+| Spreadsheet, **Cards** sheet | That drive's free space and capacity after every card it holds: a history |
+| Card record (`_card.json`) | `free_after` and `capacity` for each destination |
+| Daily card log, Totals | Each drive's capacity and free space when the page was last built (after each offload that day, `mit report <date>` or `mit daylog <date>`) |
+
+Free space counts everything on the drive, including files the tool didn't
+put there; the running totals only count what the tool offloaded. The job
+report doesn't show free space.
+
 ### Card record
 
 `_REPORTS/<date>/<CARD>_card.json` on every destination holds each file's size,
 source xxHash64 and verification result per destination, the skipped clutter,
 each clip's metadata, and the job details: project, camera, operator, notes,
-times and transfer speed. It is never overwritten. Reports are built from it,
+times, transfer speed, and each destination's free space and capacity after
+the card. It is never overwritten. Reports are built from it,
 and the master log can be rebuilt from it.
 
 ### Clip metadata
