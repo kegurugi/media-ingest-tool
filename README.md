@@ -32,6 +32,26 @@ Without them the offload still works, with a loud warning and blank metadata.
 .venv/bin/pip install -e ".[dev]"
 ```
 
+To run it as plain `mit` from any folder, link it into your command path
+(`/opt/homebrew/bin` is on the path on Apple Silicon Macs with Homebrew):
+
+```bash
+ln -s "$PWD/.venv/bin/mit" /opt/homebrew/bin/mit
+```
+
+The link points into this folder, so if you move the tool's folder, remove the
+old link (`rm /opt/homebrew/bin/mit`) and make it again.
+
+**Day-to-day:** keep each show's `project.json` in its own folder (with its
+`luts/`; the project history and day details are kept there too), `cd` into
+it, and run `mit` there. `project.json` in the current folder is used
+automatically, so `--config` isn't needed:
+
+```bash
+cd ~/Documents/PARA/Projects/ShowName/ingest
+mit ingest
+```
+
 Run the tests (the full-volume and killed-copy tests use `hdiutil` and run on macOS only):
 
 ```bash
@@ -41,10 +61,11 @@ Run the tests (the full-volume and killed-copy tests use `hdiutil` and run on ma
 ## Usage
 
 ```bash
-.venv/bin/mit ingest
+mit ingest
 ```
 
-It asks for anything not given as an option:
+(Or `.venv/bin/mit` from the tool's folder if you haven't linked it.) It asks
+for anything not given as an option:
 
 | Option | Meaning |
 |---|---|
