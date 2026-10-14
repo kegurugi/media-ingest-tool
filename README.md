@@ -4,13 +4,24 @@ A macOS command-line tool that offloads camera and audio cards to two or more
 destination drives, verifies every copy by checksum, and keeps reports and a
 media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 
-**Status:** build stages 1–7 of 8 are done: config, naming, verified
-multi-destination copying, clip metadata, the per-card job report, the master
-log with its spreadsheet export and project history, the daily card log, and
-`mit verify`. Phase 2 is done too: ASC MHL manifests and optional proxies. Sony and
-Canon XML sidecars aren't read yet; that waits for real sample cards.
+**Repository:** [github.com/kegurugi/media-ingest-tool](https://github.com/kegurugi/media-ingest-tool)
+(private).
+
+**Status:** all build stages are done: config, naming, verified
+multi-destination copying, clip metadata (including Sony XML sidecars), the
+per-card job report, the master log with its spreadsheet export and project
+history, the daily card log, `mit verify`, and Phase 2: ASC MHL manifests and
+optional proxies with LUTs. Field-tested on real Sony FX6 and Canon C80 cards
+and exFAT USB drives.
 
 ## Installation
+
+Get the code (the repository is private, so sign in to GitHub first with
+`gh auth login`):
+
+```bash
+gh repo clone kegurugi/media-ingest-tool
+```
 
 Requires Python 3.9 or newer; developed on Python 3.13 (`brew install python@3.13`).
 Clip metadata needs `ffprobe` and `exiftool` (`brew install ffmpeg exiftool`).
