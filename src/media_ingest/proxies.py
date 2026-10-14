@@ -118,8 +118,12 @@ def make_proxies(
     other_drives: List[Path] = (),
     progress: Optional[ProgressFn] = None,
     encoders: Optional[set] = None,
+    only_clips: Optional[List[str]] = None,
 ) -> CardProxies:
-    """Make missing proxies for one verified card on `drive`, then copy them to `other_drives`."""
+    """Make missing proxies for one verified card on `drive`, then copy them to `other_drives`.
+
+    only_clips limits it to clips whose file name (with or without extension) is listed.
+    """
     t0 = time.monotonic()
     drive = Path(drive)
     out = CardProxies(card=str(card), drive=drive)
@@ -136,6 +140,13 @@ def make_proxies(
         out.problem = "the card is still being offloaded, or that offload was interrupted"
         return out
     clips = _video_clips(drive, card)
+    if only_clips:
+        wanted = {c.lower() for c in only_clips}
+        clips = [c for c in clips if Path(c["rel_path"]).name.lower() in wanted
+                 or Path(c["rel_path"]).stem.lower() in wanted]
+        if not clips:
+            out.problem = f"no video clip named {', '.join(only_clips)} on this card"
+            return out
     if not clips:
         out.problem = "no video clips on this card"
         return out
@@ -358,11 +369,11 @@ def other_destinations(drive: Path, card: CardName) -> List[Path]:
 
 
 def run_for_card(drive: Path, card: CardName, config: ProjectConfig, other_drives: Optional[List[Path]] = None,
-                 progress: Optional[ProgressFn] = None) -> CardProxies:
+                 progress: Optional[ProgressFn] = None, only_clips: Optional[List[str]] = None) -> CardProxies:
     """Make proxies, copy them to the other destinations, and record the results in each drive's log."""
     from . import masterlog, xlsx_export
     others = other_destinations(drive, card) if other_drives is None else list(other_drives)
-    out = make_proxies(drive, card, config, others, progress)
+    out = make_proxies(drive, card, config, others, progress, only_clips=only_clips)
     if out.problem or not any(r.status != SKIPPED for r in out.results):
         return out
     uid = load_expected(drive, card).offload_uid

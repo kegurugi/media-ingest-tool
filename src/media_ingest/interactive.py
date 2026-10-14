@@ -566,15 +566,15 @@ def run_proxies(args, p: Prompter) -> int:
     problems = 0
     for i, (folder, drive, card) in enumerate(targets, 1):
         p.say(f"\n[{i}/{len(targets)}] {card}")
-        if not _proxies_for(p, drive, card, cfg, None):
+        if not _proxies_for(p, drive, card, cfg, None, only_clips=args.clip):
             problems += 1
     return EXIT_FAIL if problems else EXIT_PASS
 
 
-def _proxies_for(p: Prompter, drive: Path, card: CardName, cfg, others) -> bool:
+def _proxies_for(p: Prompter, drive: Path, card: CardName, cfg, others, only_clips=None) -> bool:
     progress = _ProgressPrinter(p.err)
     try:
-        out = proxies.run_for_card(drive, card, cfg, others, progress=progress)
+        out = proxies.run_for_card(drive, card, cfg, others, progress=progress, only_clips=only_clips)
     except KeyboardInterrupt:
         progress.finish()
         p.warn_loud(["Proxies INTERRUPTED. The card itself is safe.",

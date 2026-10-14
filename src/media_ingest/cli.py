@@ -52,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--drive", help="every current card the drive's log lists")
     p.add_argument("--date", help="with --drive: only that shoot date (MMDDYYYY)")
     p.add_argument("--codec", choices=["prores_proxy", "h264"], help="override project.json's proxy codec")
+    p.add_argument("--clip", action="append", help="only this clip (file name, with or without extension); repeatable")
     p = sub.add_parser("report", help="regenerate the card reports and daily card log for a date")
     p.add_argument("date", help="shoot date, MMDDYYYY")
     p.add_argument("--dest", action="append", help="destination volume name or path (default: from project.json)")

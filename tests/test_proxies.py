@@ -249,3 +249,12 @@ def test_proxy_settings_validation(proxy, message):
     data["proxies"] = proxy
     with pytest.raises(ConfigError, match=message):
         config_from_dict(data)
+
+
+def test_only_one_clip(offloaded, drives, config_file, capsys):
+    offloaded()
+    assert main(["--config", str(config_file), "proxies", "--drive", str(drives[0]), "--clip", "A002C001_26101201"]) == 0
+    folder = drives[1] / "10122026/PROXIES/ABC261012A01"
+    assert sorted(p.name for p in folder.iterdir() if not p.name.startswith(".")) == ["A002C001_26101201.mov"]
+    assert main(["--config", str(config_file), "proxies", "--drive", str(drives[0]), "--clip", "C9999.MP4"]) == 1
+    assert "no video clip named C9999.MP4" in capsys.readouterr().out
