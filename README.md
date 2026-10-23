@@ -20,6 +20,20 @@ or open [docs/quick-reference.html](docs/quick-reference.html) in a browser to
 read or print it. (`docs/quick-reference-body.html` is the same page without
 its page wrapper, used for the published web version.)
 
+## What it produces
+
+These come from a demo run with made-up data: five small cards offloaded to
+two drives, then checked again on the second drive.
+
+![Job report for one card: PASS banner, card details, and a clip table with timecode, codec, checksum and a check mark per drive](docs/images/card-report.png)
+*Job report: one per card, written to every drive, showing each clip's details and that it verified on both drives.*
+
+![Daily card log: show, crew, each camera's cards, totals and free space per drive, and notes](docs/images/daily-card-log.png)
+*Daily card log: the whole day on one printable page, replacing the hand-written card log.*
+
+![Cards sheet of the media log spreadsheet: one row per card with camera, reel, clip count and size](docs/images/spreadsheet.png)
+*Media log spreadsheet (Cards sheet): every card on the drive; other sheets list each clip, each day and later checks.*
+
 ## Installation
 
 Get the code (the repository is private, so sign in to GitHub first with
