@@ -231,7 +231,7 @@ def render(day: DayData, details: Optional[DayDetails], generated_at: Optional[d
     parts.append("<h2>Totals</h2>")
     parts.append("<dl class='fields'>"
                  f"<div><dt>Total cards</dt><dd>{len(day.cards)}</dd></div>"
-                 f"<div><dt>Total GB for the day</dt><dd>{_e(format_bytes(day.total_bytes))}</dd></div>"
+                 f"<div><dt>Total for the day</dt><dd>{_e(format_bytes(day.total_bytes))}</dd></div>"
                  + _project_total(day) + "</dl>")
     drive_rows = "".join(
         f"<tr><td class='mono'>{_e(d.volume)}</td>"

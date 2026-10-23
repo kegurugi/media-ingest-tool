@@ -1,11 +1,15 @@
 # Media Ingest Tool (`mit`)
 
+I built this after years as a field media manager on Discovery and Nat Geo
+series. It replaces ShotPut Pro plus the hand-written card log and camera
+reports with one tool that copies, verifies and documents every card. I built
+it with Claude Code, and it has 430 tests.
+
 A macOS command-line tool that offloads camera and audio cards to two or more
 destination drives, verifies every copy by checksum, and keeps reports and a
 media log on each drive. See [SPEC.md](SPEC.md) for the full specification.
 
 **Repository:** [github.com/kegurugi/media-ingest-tool](https://github.com/kegurugi/media-ingest-tool)
-(private).
 
 **Status:** all build stages are done: config, naming, verified
 multi-destination copying, clip metadata (including Sony XML sidecars), the
@@ -32,15 +36,15 @@ two drives, then checked again on the second drive.
 *Daily card log: the whole day on one printable page, replacing the hand-written card log.*
 
 ![Cards sheet of the media log spreadsheet: one row per card with camera, reel, clip count and size](docs/images/spreadsheet.png)
+
 *Media log spreadsheet (Cards sheet): every card on the drive; other sheets list each clip, each day and later checks.*
 
 ## Installation
 
-Get the code (the repository is private, so sign in to GitHub first with
-`gh auth login`):
+Get the code:
 
 ```bash
-gh repo clone kegurugi/media-ingest-tool
+git clone https://github.com/kegurugi/media-ingest-tool.git
 ```
 
 Requires Python 3.9 or newer; developed on Python 3.13 (`brew install python@3.13`).
@@ -66,7 +70,7 @@ old link (`rm /opt/homebrew/bin/mit`) and make it again.
 `project.json`, with defaults throughout so Return moves things along:
 
 ```bash
-mit init ~/Documents/PARA/Projects/ShowName/ingest
+mit init ~/Shows/ShowName/ingest
 ```
 
 It asks for the show code and name, header fields (suggesting Season,
@@ -99,7 +103,7 @@ it, and run `mit` there. `project.json` in the current folder is used
 automatically, so `--config` isn't needed:
 
 ```bash
-cd ~/Documents/PARA/Projects/ShowName/ingest
+cd ~/Shows/ShowName/ingest
 mit ingest
 ```
 
@@ -156,7 +160,7 @@ times, and **each destination's free space** now that the card is on it:
   ...
 ```
 
-Exit status: `0` PASS, `1` FAIL or cancelled, `2` error before copying, `130`
+Exit status: `0` PASS, `1` FAIL or canceled, `2` error before copying, `130`
 interrupted.
 
 ### What gets copied
@@ -233,7 +237,7 @@ this was recorded show these blank. It's a read-only view: edits made in it are
 never read back.
 Card names, reels, timecodes, checksums and dates are text cells; GB has two
 decimals; durations are `HH:MM:SS`; failures are red; superseded attempts are
-grey.
+gray.
 
 **Safe writes.** The log is never changed in place. Each update copies it to a
 temp file, changes the copy, runs SQLite's integrity check, flushes it and
@@ -438,7 +442,7 @@ Sony cameras record each clip's capture gamma in its XML sidecar, and the tool
 only applies a LUT to clips shot in the gamma the LUT is for (`lut_gamma`). The
 Sony FX6 writes:
 
-| Shot in | `CaptureGammaEquation` in the clip's XML | Colour primaries |
+| Shot in | `CaptureGammaEquation` in the clip's XML | Color primaries |
 |---|---|---|
 | Rec.709 | `rec709` | `rec709` |
 | S-Log3 / S-Gamut3.Cine | `s-log3-cine` | `s-gamut3-cine` |
@@ -466,7 +470,7 @@ So for an FX6 shooting S-Log3/S-Gamut3.Cine with Sony's s709 LUT:
   `lut` (or none).
 - Tested on a real FX6 card with one Rec.709 and one S-Log3 clip of the same
   scene: the S-Log3 proxy came out matching the Rec.709 clip's contrast and
-  colour, and the Rec.709 proxy was left untouched.
+  color, and the Rec.709 proxy was left untouched.
 
 ### Checking free space
 

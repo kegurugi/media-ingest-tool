@@ -82,7 +82,7 @@ def test_page_contents(day, drives):
         "Cam D: 1 Card, 5.00 KB (Timelapse, Shooter Name)",
         "Cam DR1: 1 Card, 500.00 KB (Drone 1)",
         "ABC261012A01 VIDEO 2 clips 2.00 MB PASS", "ABC261012D01 VIDEO 5 stills",
-        "Total cards 4", "Total GB for the day 5.51 MB",
+        "Total cards 4", "Total for the day 5.51 MB",
         "ABC261012A02 : ejected mid-clip 0002", "Wind <40 kt> all day",
     ]:
         assert expected in text, expected
